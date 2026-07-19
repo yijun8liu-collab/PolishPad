@@ -1,0 +1,213 @@
+import AppKit
+import SwiftUI
+
+@MainActor
+final class SessionModel: ObservableObject {
+    enum Phase {
+        case composing   // 组稿：还没有任何结果
+        case reviewing   // 审阅：有结果，可继续纠偏
+    }
+
+    @Published var phase: Phase = .composing
+    @Published var isLoading = false
+    @Published var draft = ""
+    @Published var feedback = ""
+    @Published var currentResult = ""
+    @Published var statusText = ""
+    @Published var errorMessage: String?
+    /// 变化时对应编辑框抢焦点（0 表示不抢）
+    @Published var focusToken = 0
+    @Published var isRecording = false
+
+    private(set) var version = 0
+    /// 已提交成功的完整对话（system + input + 每轮 feedback/assistant）
+    private var messages: [ChatMessage] = []
+    private var task: Task<Void, Never>?
+    private var focusCounter = 0
+    private let speech = SpeechRecorder()
+    /// 听写开始时输入框里已有的文字，识别结果追加在其后
+    private var dictationBase = ""
+
+    var onRequestClose: (() -> Void)?
+
+    init() {
+        speech.onStateChange = { [weak self] recording in
+            self?.isRecording = recording
+        }
+        speech.onError = { [weak self] message in
+            self?.errorMessage = message
+        }
+        speech.onPartial = { [weak self] text in
+            guard let self else { return }
+            let combined = self.dictationBase + text
+            if self.phase == .composing {
+                self.draft = combined
+            } else {
+                self.feedback = combined
+            }
+        }
+    }
+
+    // MARK: - Dictation
+
+    func toggleDictation() {
+        if isRecording {
+            speech.stop()
+            return
+        }
+        guard !isLoading else { return }
+        errorMessage = nil
+        dictationBase = phase == .composing ? draft : feedback
+        let localeId = ConfigStore.loadRaw()?.speechLocale ?? "zh-CN"
+        speech.start(localeId: localeId)
+    }
+
+    func stopDictation() {
+        speech.stop()
+    }
+
+    func bumpFocus() {
+        focusCounter += 1
+        focusToken = focusCounter
+    }
+
+    // MARK: - Actions
+
+    func submitDraft() {
+        guard !isLoading else { return }
+        stopDictation()
+        let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else {
+            errorMessage = "请输入内容"
+            return
+        }
+        let config: AppConfig
+        do {
+            config = try ConfigStore.load()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let requestMessages = [
+            ChatMessage(role: "system", content: config.resolvedSystemPrompt),
+            ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
+        ]
+        run(requestMessages: requestMessages, config: config)
+    }
+
+    func submitFeedback() {
+        guard !isLoading, phase == .reviewing else { return }
+        stopDictation()
+        let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty else { return }
+        let config: AppConfig
+        do {
+            config = try ConfigStore.load()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        // 失败时不污染已有会话：本轮消息成功后才提交进 messages
+        let requestMessages = messages + [
+            ChatMessage(role: "user", content: "<feedback>\n\(note)\n</feedback>")
+        ]
+        run(requestMessages: requestMessages, config: config)
+    }
+
+    private func run(requestMessages: [ChatMessage], config: AppConfig) {
+        isLoading = true
+        errorMessage = nil
+        statusText = "润色中…（Esc 取消）"
+        task = Task { [weak self] in
+            do {
+                let output = try await LLMClient.complete(messages: requestMessages, config: config)
+                guard !Task.isCancelled else { return }
+                self?.handleSuccess(output: output, requestMessages: requestMessages)
+            } catch is CancellationError {
+                // 用户主动取消，静默返回
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.handleFailure(error)
+            }
+        }
+    }
+
+    private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
+        let previousLength = currentResult.count
+        version += 1
+        messages = requestMessages + [ChatMessage(role: "assistant", content: output)]
+        currentResult = output
+
+        // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）
+        var warning = ""
+        if version > 1, output.count * 10 < previousLength * 3 {
+            warning = "（比上一版短很多，请检查是否完整）"
+        }
+
+        copyToClipboard(output)
+        statusText = "✅ v\(version) 已复制到剪贴板\(warning)"
+        feedback = ""
+        isLoading = false
+        phase = .reviewing
+        bumpFocus()
+    }
+
+    private func handleFailure(_ error: Error) {
+        isLoading = false
+        errorMessage = error.localizedDescription
+        statusText = version > 0 ? "✅ v\(version) 仍在剪贴板中" : ""
+    }
+
+    func cancelRequest() {
+        task?.cancel()
+        task = nil
+        isLoading = false
+        statusText = version > 0 ? "已取消，剪贴板仍是 v\(version)" : "已取消"
+    }
+
+    /// Esc：听写中先停止听写；请求中先取消请求；否则关窗
+    func handleEscape() {
+        if isRecording {
+            stopDictation()
+        } else if isLoading {
+            cancelRequest()
+        } else {
+            onRequestClose?()
+        }
+    }
+
+    /// ⌘N 重新开始
+    func resetSession() {
+        stopDictation()
+        task?.cancel()
+        task = nil
+        phase = .composing
+        isLoading = false
+        draft = ""
+        feedback = ""
+        currentResult = ""
+        statusText = ""
+        errorMessage = nil
+        version = 0
+        messages = []
+        bumpFocus()
+    }
+
+    func copyOriginal() {
+        copyToClipboard(draft)
+        statusText = "已复制原文（未润色）"
+        errorMessage = nil
+    }
+
+    func copyResultAgain() {
+        guard !currentResult.isEmpty else { return }
+        copyToClipboard(currentResult)
+        statusText = "✅ v\(version) 已复制到剪贴板"
+    }
+
+    private func copyToClipboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+}

@@ -1,0 +1,5 @@
+.build/
+.swiftpm/
+PolishPad.app/
+*.zip
+.DS_Store
