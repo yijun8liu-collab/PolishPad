@@ -12,6 +12,8 @@ final class PanelController {
     private let model = SessionModel()
     /// 唤起前的前台应用，关窗后把焦点还回去
     private var previousApp: NSRunningApplication?
+    /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
+    private var lastPastedText: String?
 
     init() {
         panel = KeyablePanel(
@@ -52,6 +54,7 @@ final class PanelController {
     func show() {
         // 每次唤起都是全新会话（关窗即结束上一次对话）
         model.resetSession()
+        lastPastedText = nil
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // 出现在鼠标所在屏幕，类 Spotlight 位置（水平居中，偏上）
@@ -109,11 +112,9 @@ final class PanelController {
             }
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                if replacePrevious {
-                    KeySimulator.postCommandKey(KeySimulator.keyZ)
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                }
+                await self.deletePreviousPasteIfNeeded(replacePrevious)
                 KeySimulator.postCommandKey(KeySimulator.keyV)
+                self.lastPastedText = NSPasteboard.general.string(forType: .string)
                 HUD.shared.flashSuccess(replacePrevious
                     ? UILang.t("已替换", "Replaced")
                     : UILang.t("已粘贴", "Pasted"))
@@ -129,6 +130,15 @@ final class PanelController {
             NSApp.activate(ignoringOtherApps: true)
             model.bumpFocus()
         }
+    }
+
+    /// 用精确数量的退格删除上一轮粘贴的文本。
+    /// 终端类应用不支持 ⌘Z 文本撤销（会变成追加而不是替换），退格是普适行为
+    private func deletePreviousPasteIfNeeded(_ replacePrevious: Bool) async {
+        guard replacePrevious, let previous = lastPastedText, !previous.isEmpty else { return }
+        HUD.shared.showWorking(UILang.t("替换中…", "Replacing…"))
+        await KeySimulator.postBackspaces(previous.count)
+        try? await Task.sleep(nanoseconds: 150_000_000)
     }
 
     /// 关窗 → 激活原应用 → 自动粘贴（结果已在剪贴板）。
@@ -167,11 +177,9 @@ final class PanelController {
             }
             // 再留一点时间让焦点落回输入框
             try? await Task.sleep(nanoseconds: 200_000_000)
-            if replacePrevious {
-                KeySimulator.postCommandKey(KeySimulator.keyZ)
-                try? await Task.sleep(nanoseconds: 150_000_000)
-            }
+            await self.deletePreviousPasteIfNeeded(replacePrevious)
             KeySimulator.postCommandKey(KeySimulator.keyV)
+            self.lastPastedText = NSPasteboard.general.string(forType: .string)
             HUD.shared.flashSuccess(replacePrevious
                 ? UILang.t("已替换", "Replaced")
                 : UILang.t("已粘贴", "Pasted"))

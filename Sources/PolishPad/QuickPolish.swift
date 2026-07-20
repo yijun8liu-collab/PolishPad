@@ -6,7 +6,23 @@ enum KeySimulator {
     static let keyA: CGKeyCode = 0
     static let keyC: CGKeyCode = 8
     static let keyV: CGKeyCode = 9
-    static let keyZ: CGKeyCode = 6
+    static let keyDelete: CGKeyCode = 51
+
+    /// 发送 count 次退格。用于删除上一轮粘贴的文本——比 ⌘Z 可靠：
+    /// 终端类应用（iTerm/Claude Code）不支持文本撤销，⌘Z 是空操作
+    static func postBackspaces(_ count: Int) async {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for i in 0..<count {
+            let down = CGEvent(keyboardEventSource: source, virtualKey: keyDelete, keyDown: true)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: keyDelete, keyDown: false)
+            down?.post(tap: .cghidEventTap)
+            up?.post(tap: .cghidEventTap)
+            // 分批喘口气，避免事件洪峰压垮目标应用
+            if i % 40 == 39 {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+            }
+        }
+    }
 
     /// 检查辅助功能权限，未授权时弹出系统引导框
     static func ensureAccessibilityPermission() -> Bool {
