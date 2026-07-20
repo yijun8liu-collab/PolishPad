@@ -72,7 +72,7 @@ struct SessionView: View {
             if model.isRecording {
                 HStack(spacing: 4) {
                     Image(systemName: "mic.fill")
-                    Text("正在听写…（⌘D 停止）")
+                    Text(model.t("正在听写…（⌘D 停止）", "Dictating… (⌘D to stop)"))
                 }
                 .font(.caption)
                 .foregroundColor(.red)
@@ -83,7 +83,7 @@ struct SessionView: View {
                     .controlSize(.small)
             }
 
-            // 输出语言开关：中 = 保持原文语言，EN = 输出英文
+            // 输出语言 + 界面语言开关
             Picker("", selection: $model.outputEnglish) {
                 Text("中").tag(false)
                 Text("EN").tag(true)
@@ -91,7 +91,18 @@ struct SessionView: View {
             .pickerStyle(.segmented)
             .frame(width: 84)
             .labelsHidden()
-            .help("润色输出语言：中 = 保持原文语言，EN = 输出英文（多轮中途切换也生效）")
+            .help(model.t("中 = 保持原文语言，EN = 输出英文（界面语言同步切换）",
+                          "中 = keep original language, EN = English output (UI language follows)"))
+
+            Button {
+                model.forceClose()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(Color.secondary.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .help(model.t("关闭（Esc）", "Close (Esc)"))
         }
     }
 
@@ -109,7 +120,8 @@ struct SessionView: View {
             .frame(height: 170)
 
             if model.draft.isEmpty {
-                Text("输入要润色的内容，Enter 提交…")
+                Text(model.t("输入要润色的内容，Enter 提交…",
+                             "Type what you want polished, Enter to submit…"))
                     .foregroundColor(Color.secondary.opacity(0.7))
                     .padding(.top, 8)
                     .padding(.leading, 8)
@@ -151,7 +163,8 @@ struct SessionView: View {
                 .frame(height: 64)
 
                 if model.feedback.isEmpty {
-                    Text("说怎么改，Enter 发送并替换已粘贴的内容")
+                    Text(model.t("说怎么改，Enter 发送并替换已粘贴的内容",
+                                 "Describe changes; Enter sends and replaces the pasted text"))
                         .font(.system(size: 13))
                         .foregroundColor(Color.secondary.opacity(0.7))
                         .padding(.top, 8)
@@ -172,7 +185,7 @@ struct SessionView: View {
                 .lineLimit(3)
             Spacer()
             if !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button("复制原文") { model.copyOriginal() }
+                Button(model.t("复制原文", "Copy Original")) { model.copyOriginal() }
                     .controlSize(.small)
             }
         }
@@ -200,25 +213,27 @@ struct SessionView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("d", modifiers: .command)
             .disabled(model.isLoading)
-            .help("语音输入 ⌘D")
+            .help(model.t("语音输入 ⌘D", "Voice input ⌘D"))
 
             Text(model.phase == .composing
-                 ? "Enter 提交 · ⌘D 语音 · Esc 关闭"
-                 : "Enter 发送纠偏 · ⌘D 语音 · Esc 关闭")
+                 ? model.t("Enter 提交 · ⌘D 语音 · Esc 关闭",
+                           "Enter submit · ⌘D voice · Esc close")
+                 : model.t("Enter 发送纠偏 · ⌘D 语音 · Esc 关闭",
+                           "Enter refine · ⌘D voice · Esc close"))
                 .font(.caption2)
                 .foregroundColor(Color.secondary.opacity(0.8))
 
             Spacer()
 
             if model.phase == .reviewing {
-                Button("再次复制") { model.copyResultAgain() }
+                Button(model.t("再次复制", "Copy Again")) { model.copyResultAgain() }
                     .controlSize(.small)
                     .disabled(model.isLoading)
-                Button("粘贴回原应用") { model.requestCloseAndPaste() }
+                Button(model.t("粘贴回原应用", "Paste to App")) { model.requestCloseAndPaste() }
                     .controlSize(.small)
                     .disabled(model.isLoading)
             }
-            Button("重新开始 ⌘N") { model.resetSession() }
+            Button(model.t("重新开始 ⌘N", "Restart ⌘N")) { model.resetSession() }
                 .controlSize(.small)
                 .keyboardShortcut("n", modifiers: .command)
         }

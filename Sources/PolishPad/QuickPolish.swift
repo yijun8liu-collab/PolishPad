@@ -93,7 +93,9 @@ final class QuickPolishController {
 
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
-        HUD.shared.showWorking(mode == .all ? "全选润色中…" : "润色中…")
+        HUD.shared.showWorking(mode == .all
+            ? UILang.t("全选润色中…", "Polishing all…")
+            : UILang.t("润色中…", "Polishing…"))
 
         // 用户触发快捷键时修饰键（⌃⌥）往往还按着，此时模拟 ⌘A/⌘C 会被
         // 叠加成 ⌘⌃⌥A 导致目标应用不响应——先等所有修饰键物理松开
@@ -137,7 +139,7 @@ final class QuickPolishController {
             try? await Task.sleep(nanoseconds: 600_000_000)
             snapshot.restore()
             onStateChange?(.success)
-            HUD.shared.flashSuccess("已替换")
+            HUD.shared.flashSuccess(UILang.t("已替换", "Replaced"))
             NSSound(named: "Glass")?.play()
         } catch {
             snapshot.restore()

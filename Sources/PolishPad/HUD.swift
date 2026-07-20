@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+/// 面板外组件（HUD/控制器）的文案本地化，跟随 中/EN 开关
+enum UILang {
+    static var isEnglish: Bool {
+        UserDefaults.standard.bool(forKey: "outputEnglish")
+    }
+
+    static func t(_ zh: String, _ en: String) -> String {
+        isEnglish ? en : zh
+    }
+}
+
 /// 光标旁的悬浮状态提示：不抢焦点、不响应鼠标，用于划词润色的过程反馈
 @MainActor
 final class HUD {

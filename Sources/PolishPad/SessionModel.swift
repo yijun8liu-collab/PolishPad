@@ -81,6 +81,20 @@ final class SessionModel: ObservableObject {
         focusToken = focusCounter
     }
 
+    /// 界面文案随 中/EN 开关切换
+    func t(_ zh: String, _ en: String) -> String {
+        outputEnglish ? en : zh
+    }
+
+    /// 关闭按钮：无条件收尾并关窗
+    func forceClose() {
+        stopDictation()
+        task?.cancel()
+        task = nil
+        isLoading = false
+        onRequestClose?()
+    }
+
     // MARK: - Actions
 
     func submitDraft() {
@@ -88,7 +102,7 @@ final class SessionModel: ObservableObject {
         stopDictation()
         let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else {
-            errorMessage = "请输入内容"
+            errorMessage = t("请输入内容", "Please enter some text")
             return
         }
         let config: AppConfig
@@ -106,12 +120,7 @@ final class SessionModel: ObservableObject {
     }
 
     private func systemContent(_ config: AppConfig) -> String {
-        var prompt = config.resolvedSystemPrompt
-        if outputEnglish {
-            prompt += "\n\n输出语言要求：无论原文是什么语言，重写结果必须用地道、自然的英文输出"
-                + "（代码、命令、URL、专有名词原样保留）。此要求优先于上面关于保持原文语言的规则。"
-        }
-        return prompt
+        config.resolvedSystemPrompt(english: outputEnglish)
     }
 
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
@@ -163,7 +172,7 @@ final class SessionModel: ObservableObject {
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
         errorMessage = nil
-        statusText = "润色中…（Esc 取消）"
+        statusText = t("润色中…（Esc 取消）", "Polishing… (Esc to cancel)")
         task = Task { [weak self] in
             do {
                 let output = try await LLMClient.complete(messages: requestMessages, config: config)
@@ -187,11 +196,12 @@ final class SessionModel: ObservableObject {
         // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）
         var warning = ""
         if version > 1, output.count * 10 < previousLength * 3 {
-            warning = "（比上一版短很多，请检查是否完整）"
+            warning = t("（比上一版短很多，请检查是否完整）",
+                        " (much shorter than the last version — check completeness)")
         }
 
         copyToClipboard(output)
-        statusText = "✅ v\(version) 已复制到剪贴板\(warning)"
+        statusText = t("✅ v\(version) 已复制到剪贴板", "✅ v\(version) copied to clipboard") + warning
         feedback = ""
         isLoading = false
         phase = .reviewing
@@ -209,14 +219,18 @@ final class SessionModel: ObservableObject {
     private func handleFailure(_ error: Error) {
         isLoading = false
         errorMessage = error.localizedDescription
-        statusText = version > 0 ? "✅ v\(version) 仍在剪贴板中" : ""
+        statusText = version > 0
+            ? t("✅ v\(version) 仍在剪贴板中", "✅ v\(version) still on clipboard")
+            : ""
     }
 
     func cancelRequest() {
         task?.cancel()
         task = nil
         isLoading = false
-        statusText = version > 0 ? "已取消，剪贴板仍是 v\(version)" : "已取消"
+        statusText = version > 0
+            ? t("已取消，剪贴板仍是 v\(version)", "Cancelled — clipboard still has v\(version)")
+            : t("已取消", "Cancelled")
     }
 
     /// Esc：听写中先停止听写；请求中先取消请求；否则关窗
@@ -250,14 +264,14 @@ final class SessionModel: ObservableObject {
 
     func copyOriginal() {
         copyToClipboard(draft)
-        statusText = "已复制原文（未润色）"
+        statusText = t("已复制原文（未润色）", "Original copied (unpolished)")
         errorMessage = nil
     }
 
     func copyResultAgain() {
         guard !currentResult.isEmpty else { return }
         copyToClipboard(currentResult)
-        statusText = "✅ v\(version) 已复制到剪贴板"
+        statusText = t("✅ v\(version) 已复制到剪贴板", "✅ v\(version) copied to clipboard")
     }
 
     private func copyToClipboard(_ text: String) {

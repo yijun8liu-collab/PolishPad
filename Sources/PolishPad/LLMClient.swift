@@ -48,11 +48,12 @@ enum LLMClient {
         let error: APIError?
     }
 
-    /// 划词/全选替换用的单发润色（无多轮上下文）
+    /// 划词/全选替换用的单发润色（无多轮上下文），跟随面板的 中/EN 开关
     static func polishOnce(_ input: String) async throws -> String {
         let config = try ConfigStore.load()
+        let english = UserDefaults.standard.bool(forKey: "outputEnglish")
         let messages = [
-            ChatMessage(role: "system", content: config.resolvedSystemPrompt),
+            ChatMessage(role: "system", content: config.resolvedSystemPrompt(english: english)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
         return try await complete(messages: messages, config: config)

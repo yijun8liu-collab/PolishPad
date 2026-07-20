@@ -108,7 +108,10 @@ final class PanelController {
                 app.activate()
             }
             guard activated else {
-                HUD.shared.flashSuccess("已复制（未能切回原应用，请手动粘贴）")
+                HUD.shared.flashSuccess(UILang.t(
+                    "已复制（未能切回原应用，请手动粘贴）",
+                    "Copied (couldn't reactivate the app — paste manually)"
+                ))
                 return
             }
             // 再留一点时间让焦点落回输入框
@@ -118,7 +121,9 @@ final class PanelController {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
             KeySimulator.postCommandKey(KeySimulator.keyV)
-            HUD.shared.flashSuccess(replacePrevious ? "已替换" : "已粘贴")
+            HUD.shared.flashSuccess(replacePrevious
+                ? UILang.t("已替换", "Replaced")
+                : UILang.t("已粘贴", "Pasted"))
         }
     }
 }
