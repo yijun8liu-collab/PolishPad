@@ -8,7 +8,13 @@ final class SessionModel: ObservableObject {
         case reviewing   // 审阅：有结果，可继续纠偏
     }
 
+    enum FeedbackMode {
+        case append   // 追加：输入的是新内容，润色后并入全文（默认）
+        case revise   // 修改：输入的是对当前版本的修改意见
+    }
+
     @Published var phase: Phase = .composing
+    @Published var feedbackMode: FeedbackMode = .append
     @Published var isLoading = false
     @Published var draft = ""
     @Published var feedback = ""
@@ -163,8 +169,10 @@ final class SessionModel: ObservableObject {
         if let first = base.first, first.role == "system" {
             base[0] = ChatMessage(role: "system", content: systemContent(config))
         }
+        // 追加 = 新内容并入全文；修改 = 对当前版本的修改意见
+        let tag = feedbackMode == .append ? "append" : "feedback"
         let requestMessages = base + [
-            ChatMessage(role: "user", content: "<feedback>\n\(note)\n</feedback>")
+            ChatMessage(role: "user", content: "<\(tag)>\n\(note)\n</\(tag)>")
         ]
         run(requestMessages: requestMessages, config: config)
     }
@@ -244,12 +252,17 @@ final class SessionModel: ObservableObject {
         }
     }
 
+    func toggleFeedbackMode() {
+        feedbackMode = feedbackMode == .append ? .revise : .append
+    }
+
     /// ⌘N 重新开始
     func resetSession() {
         stopDictation()
         task?.cancel()
         task = nil
         phase = .composing
+        feedbackMode = .append
         isLoading = false
         draft = ""
         feedback = ""

@@ -14,6 +14,8 @@ struct SubmitTextEditor: NSViewRepresentable {
     var focusToken: Int = 0
     var onSubmit: () -> Void = {}
     var onCancel: () -> Void = {}
+    /// 提供时，Tab 键触发回调而不是插入制表符/移动焦点
+    var onTab: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -82,6 +84,12 @@ struct SubmitTextEditor: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)):
                 parent.onCancel()
                 return true
+            case #selector(NSResponder.insertTab(_:)):
+                if let onTab = parent.onTab {
+                    onTab()
+                    return true
+                }
+                return false
             default:
                 return false
             }
