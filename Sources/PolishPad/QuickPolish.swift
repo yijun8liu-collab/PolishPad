@@ -75,6 +75,20 @@ struct ClipboardSnapshot {
     }
 }
 
+/// 流式进度节流：跨线程回调安全，每累积约 40 字放行一次
+final class ProgressThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastReported = 0
+
+    func shouldReport(_ count: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard count - lastReported >= 40 else { return false }
+        lastReported = count
+        return true
+    }
+}
+
 /// 划词优化：抓取前台应用的选中文本（或全选），优化后原地替换
 @MainActor
 final class QuickPolishController {
@@ -147,7 +161,15 @@ final class QuickPolishController {
         }
 
         do {
-            let output = try await LLMClient.polishOnce(input)
+            // 流式进度：每多收到约 40 字更新一次气泡，长文本下能看到进展
+            let progress = ProgressThrottle()
+            let output = try await LLMClient.polishOnce(input) { partial in
+                let count = partial.count
+                guard progress.shouldReport(count) else { return }
+                Task { @MainActor in
+                    HUD.shared.updateWorking(UILang.t("优化中… \(count) 字", "Refining… \(count) chars"))
+                }
+            }
             pasteboard.clearContents()
             pasteboard.setString(output, forType: .string)
             KeySimulator.postCommandKey(KeySimulator.keyV)

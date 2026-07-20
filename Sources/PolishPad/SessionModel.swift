@@ -181,22 +181,42 @@ final class SessionModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         statusText = t("优化中…（Esc 取消）", "Refining… (Esc to cancel)")
+        // 流式期间结果区实时刷新；取消/失败时恢复本轮开始前的版本
+        let resultBeforeRound = currentResult
+        previousResultLength = currentResult.count
         task = Task { [weak self] in
             do {
-                let output = try await LLMClient.complete(messages: requestMessages, config: config)
+                let output = try await LLMClient.completeStreaming(
+                    messages: requestMessages,
+                    config: config
+                ) { [weak self] partial in
+                    Task { @MainActor in
+                        guard let self, self.isLoading else { return }
+                        self.currentResult = partial
+                        if self.phase == .composing {
+                            self.phase = .reviewing  // 首轮：一有增量就切到结果视图
+                        }
+                    }
+                }
                 guard !Task.isCancelled else { return }
                 self?.handleSuccess(output: output, requestMessages: requestMessages)
             } catch is CancellationError {
-                // 用户主动取消，静默返回
+                self?.currentResult = resultBeforeRound
+                if resultBeforeRound.isEmpty { self?.phase = .composing }
             } catch {
                 guard !Task.isCancelled else { return }
+                self?.currentResult = resultBeforeRound
+                if resultBeforeRound.isEmpty { self?.phase = .composing }
                 self?.handleFailure(error)
             }
         }
     }
 
+    /// 本轮开始前的结果长度，用于疑似截断检测（流式期间 currentResult 已被覆盖）
+    private var previousResultLength = 0
+
     private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
-        let previousLength = currentResult.count
+        let previousLength = previousResultLength
         version += 1
         messages = requestMessages + [ChatMessage(role: "assistant", content: output)]
         currentResult = output

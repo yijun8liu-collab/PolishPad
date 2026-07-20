@@ -36,6 +36,15 @@ enum LLMClient {
         let messages: [ChatMessage]
         let temperature: Double
         let max_tokens: Int
+        var stream: Bool = false
+    }
+
+    private struct StreamChunk: Decodable {
+        struct Choice: Decodable {
+            struct Delta: Decodable { let content: String? }
+            let delta: Delta
+        }
+        let choices: [Choice]?
     }
 
     private struct ResponseBody: Decodable {
@@ -49,23 +58,77 @@ enum LLMClient {
     }
 
     /// 划词/全选替换用的单发优化（无多轮上下文），跟随面板的 中/EN 开关
-    static func polishOnce(_ input: String) async throws -> String {
+    static func polishOnce(
+        _ input: String,
+        onPartial: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
         let config = try ConfigStore.load()
         let english = UserDefaults.standard.bool(forKey: "outputEnglish")
         let messages = [
             ChatMessage(role: "system", content: config.resolvedSystemPrompt(english: english)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
-        return try await complete(messages: messages, config: config)
+        return try await completeStreaming(messages: messages, config: config, onPartial: onPartial)
     }
 
-    static func complete(messages: [ChatMessage], config: AppConfig) async throws -> String {
+    /// 流式补全：每收到增量就回调累计文本。长文本下既有实时反馈，
+    /// 空闲超时也随每个数据块刷新，不会撞上整体 60s 墙
+    static func completeStreaming(
+        messages: [ChatMessage],
+        config: AppConfig,
+        onPartial: (@Sendable (String) -> Void)?
+    ) async throws -> String {
+        let request = try buildRequest(messages: messages, config: config, stream: true)
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await URLSession.shared.bytes(for: request)
+        } catch let error as URLError {
+            throw mapURLError(error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            var body = ""
+            for try await line in bytes.lines { body += line }
+            if let data = body.data(using: .utf8),
+               let parsed = try? JSONDecoder().decode(ResponseBody.self, from: data),
+               let message = parsed.error?.message {
+                throw LLMError.http(http.statusCode, message)
+            }
+            throw LLMError.http(http.statusCode, body)
+        }
+
+        var full = ""
+        do {
+            for try await line in bytes.lines {
+                guard line.hasPrefix("data:") else { continue }
+                let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                if payload == "[DONE]" { break }
+                guard let data = payload.data(using: .utf8),
+                      let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data),
+                      let delta = chunk.choices?.first?.delta.content,
+                      !delta.isEmpty else { continue }
+                full += delta
+                onPartial?(full)
+            }
+        } catch let error as URLError {
+            throw mapURLError(error)
+        }
+
+        let cleaned = OutputCleaner.clean(full)
+        guard !cleaned.isEmpty else { throw LLMError.emptyResponse }
+        return cleaned
+    }
+
+    private static func buildRequest(
+        messages: [ChatMessage], config: AppConfig, stream: Bool
+    ) throws -> URLRequest {
         var base = config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         guard let url = URL(string: base + "/chat/completions") else {
             throw LLMError.badURL
         }
-
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 60
@@ -75,25 +138,36 @@ enum LLMClient {
             model: config.model,
             messages: messages,
             temperature: config.temperature ?? 0.3,
-            max_tokens: config.maxTokens ?? 4096
+            max_tokens: config.maxTokens ?? 4096,
+            stream: stream
         ))
+        return request
+    }
+
+    private static func mapURLError(_ error: URLError) -> Error {
+        switch error.code {
+        case .cancelled:
+            return CancellationError()
+        case .timedOut:
+            return LLMError.network("请求超时，请检查网络或稍后重试")
+        case .notConnectedToInternet, .networkConnectionLost:
+            return LLMError.network("网络未连接")
+        case .cannotFindHost, .cannotConnectToHost:
+            return LLMError.network("无法连接到服务器，请检查 baseURL")
+        default:
+            return LLMError.network("网络错误：\(error.localizedDescription)")
+        }
+    }
+
+    static func complete(messages: [ChatMessage], config: AppConfig) async throws -> String {
+        let request = try buildRequest(messages: messages, config: config, stream: false)
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch let error as URLError {
-            if error.code == .cancelled { throw CancellationError() }
-            switch error.code {
-            case .timedOut:
-                throw LLMError.network("请求超时，请检查网络或稍后重试")
-            case .notConnectedToInternet, .networkConnectionLost:
-                throw LLMError.network("网络未连接")
-            case .cannotFindHost, .cannotConnectToHost:
-                throw LLMError.network("无法连接到服务器，请检查 baseURL")
-            default:
-                throw LLMError.network("网络错误：\(error.localizedDescription)")
-            }
+            throw mapURLError(error)
         }
 
         let body = String(data: data, encoding: .utf8) ?? ""

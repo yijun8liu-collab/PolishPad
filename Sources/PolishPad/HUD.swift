@@ -43,6 +43,18 @@ final class HUD {
         present(HUDView(text: text, style: .working))
     }
 
+    /// 更新进行中的文字但不重新定位（流式进度用，避免气泡跟着鼠标跳）
+    func updateWorking(_ text: String) {
+        guard panel.isVisible else { return }
+        let topY = panel.frame.maxY
+        let x = panel.frame.minX
+        let hosting = NSHostingView(rootView: HUDView(text: text, style: .working))
+        panel.contentView = hosting
+        let size = hosting.fittingSize
+        panel.setContentSize(size)
+        panel.setFrameOrigin(NSPoint(x: x, y: topY - size.height))
+    }
+
     func flashSuccess(_ text: String) {
         sessionToken += 1
         let token = sessionToken
