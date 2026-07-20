@@ -75,12 +75,12 @@ struct ClipboardSnapshot {
     }
 }
 
-/// 划词润色：抓取前台应用的选中文本（或全选），润色后原地替换
+/// 划词优化：抓取前台应用的选中文本（或全选），优化后原地替换
 @MainActor
 final class QuickPolishController {
     enum Mode {
-        case selection  // 润色当前选中文本
-        case all        // 先模拟 ⌘A 全选再润色
+        case selection  // 优化当前选中文本
+        case all        // 先模拟 ⌘A 全选再优化
     }
 
     enum State {
@@ -110,8 +110,8 @@ final class QuickPolishController {
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
         HUD.shared.showWorking(mode == .all
-            ? UILang.t("全选润色中…", "Polishing all…")
-            : UILang.t("润色中…", "Polishing…"))
+            ? UILang.t("全选优化中…", "Refining all…")
+            : UILang.t("优化中…", "Refining…"))
 
         // 用户触发快捷键时修饰键（⌃⌥）往往还按着，此时模拟 ⌘A/⌘C 会被
         // 叠加成 ⌘⌃⌥A 导致目标应用不响应——先等所有修饰键物理松开
@@ -180,7 +180,7 @@ final class QuickPolishController {
         HUD.shared.hide()
         NSSound(named: "Basso")?.play()
         let alert = NSAlert()
-        alert.messageText = "润色替换失败"
+        alert.messageText = "优化替换失败"
         alert.informativeText = message + "\n\n原文未被修改，剪贴板已恢复原有内容。"
         alert.runModal()
     }

@@ -62,7 +62,7 @@ struct SessionView: View {
             .frame(height: 190)
 
             if model.draft.isEmpty {
-                Text(model.t("输入要润色的内容…", "Type what you want polished…"))
+                Text(model.t("输入要优化的内容…", "Type what you want refined…"))
                     .font(.system(size: 15))
                     .foregroundColor(Color.secondary.opacity(0.5))
                     .padding(.top, 18)
@@ -137,7 +137,7 @@ struct SessionView: View {
 
     private var feedbackPlaceholder: String {
         model.feedbackMode == .append
-            ? model.t("补充新内容，润色后并入上文；回车完成…", "Add new content to merge in; Enter to finish…")
+            ? model.t("补充新内容，优化后并入上文；回车完成…", "Add new content to merge in; Enter to finish…")
             : model.t("说怎么改；回车完成…", "Describe changes; Enter to finish…")
     }
 
@@ -241,10 +241,10 @@ struct SessionView: View {
             return model.t("正在听写 · ⌘D 停止", "Dictating · ⌘D to stop")
         }
         if model.isLoading {
-            return model.t("润色中 · Esc 取消", "Polishing · Esc to cancel")
+            return model.t("优化中 · Esc 取消", "Refining · Esc to cancel")
         }
         return model.phase == .composing
-            ? model.t("↩ 润色 · ⇧↩ 换行", "↩ polish · ⇧↩ newline")
+            ? model.t("↩ 优化 · ⇧↩ 换行", "↩ refine · ⇧↩ newline")
             : model.t("↩ 替换 · ⇥ 追加/修改 · 空↩ 完成", "↩ replace · ⇥ add/edit · empty ↩ done")
     }
 

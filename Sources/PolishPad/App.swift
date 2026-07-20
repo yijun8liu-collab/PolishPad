@@ -148,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let openItem = NSMenuItem(
-            title: "打开润色窗口（\(panelHotkeySpec)）",
+            title: "打开优化窗口（\(panelHotkeySpec)）",
             action: #selector(togglePanel), keyEquivalent: ""
         )
         openItem.target = self
@@ -156,13 +156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 点击状态栏菜单不会切走目标应用的焦点，所以这两项可以直接作用于当前应用
         let selectionItem = NSMenuItem(
-            title: "润色选中文本（\(selectionHotkeySpec)）",
+            title: "优化选中文本（\(selectionHotkeySpec)）",
             action: #selector(polishSelectionFromMenu), keyEquivalent: ""
         )
         selectionItem.target = self
         menu.addItem(selectionItem)
         let allItem = NSMenuItem(
-            title: "全选润色替换（\(allHotkeySpec)）",
+            title: "全选优化替换（\(allHotkeySpec)）",
             action: #selector(polishAllFromMenu), keyEquivalent: ""
         )
         allItem.target = self

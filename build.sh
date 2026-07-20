@@ -35,14 +35,14 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>NSMicrophoneUsageDescription</key>
     <string>语音输入需要使用麦克风</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>将你的语音转写为文字后进行润色</string>
+    <string>将你的语音转写为文字后进行优化</string>
     <key>NSServices</key>
     <array>
         <dict>
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>PolishPad：润色并替换</string>
+                <string>PolishPad：优化并替换</string>
             </dict>
             <key>NSMessage</key>
             <string>polishSelection</string>
@@ -61,7 +61,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>PolishPad：全选润色并替换</string>
+                <string>PolishPad：全选优化并替换</string>
             </dict>
             <key>NSMessage</key>
             <string>polishAll</string>

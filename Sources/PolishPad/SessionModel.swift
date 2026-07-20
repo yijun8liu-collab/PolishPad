@@ -9,7 +9,7 @@ final class SessionModel: ObservableObject {
     }
 
     enum FeedbackMode {
-        case append   // 追加：输入的是新内容，润色后并入全文（默认）
+        case append   // 追加：输入的是新内容，优化后并入全文（默认）
         case revise   // 修改：输入的是对当前版本的修改意见
     }
 
@@ -41,7 +41,7 @@ final class SessionModel: ObservableObject {
     var onRequestClose: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
-    /// 润色成功即自动贴回；replacePrevious 为 true 时先 ⌘Z 撤销上次粘贴
+    /// 优化成功即自动贴回；replacePrevious 为 true 时先 ⌘Z 撤销上次粘贴
     var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
     /// 本会话是否已经自动粘贴过（决定下次是否先撤销）
     private var hasAutoPasted = false
@@ -180,7 +180,7 @@ final class SessionModel: ObservableObject {
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
         errorMessage = nil
-        statusText = t("润色中…（Esc 取消）", "Polishing… (Esc to cancel)")
+        statusText = t("优化中…（Esc 取消）", "Refining… (Esc to cancel)")
         task = Task { [weak self] in
             do {
                 let output = try await LLMClient.complete(messages: requestMessages, config: config)
@@ -277,7 +277,7 @@ final class SessionModel: ObservableObject {
 
     func copyOriginal() {
         copyToClipboard(draft)
-        statusText = t("已复制原文（未润色）", "Original copied (unpolished)")
+        statusText = t("已复制原文（未优化）", "Original copied (not refined)")
         errorMessage = nil
     }
 

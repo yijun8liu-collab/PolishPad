@@ -54,13 +54,13 @@ struct SettingsView: View {
 
                 Section(UILang.t("快捷键（保存后立即生效）", "Hotkeys (apply on save)")) {
                     HotkeyRecorderField(
-                        label: UILang.t("润色窗口", "Polish panel"),
+                        label: UILang.t("优化窗口", "Main panel"),
                         spec: $hotkeyPanel, coordinator: recorder)
                     HotkeyRecorderField(
-                        label: UILang.t("划词润色替换", "Polish selection"),
+                        label: UILang.t("划词优化替换", "Refine selection"),
                         spec: $hotkeySelection, coordinator: recorder)
                     HotkeyRecorderField(
-                        label: UILang.t("全选润色替换", "Select-all polish"),
+                        label: UILang.t("全选优化替换", "Select-all refine"),
                         spec: $hotkeyAll, coordinator: recorder)
                     Text(UILang.t("点击后直接按下新的组合键（至少含一个修饰键）",
                                   "Click, then press the new combination (needs at least one modifier)"))
@@ -69,7 +69,7 @@ struct SettingsView: View {
                 }
 
                 Section(UILang.t("行为", "Behavior")) {
-                    Toggle(UILang.t("润色后自动粘贴回原应用", "Auto-paste result back into the app"),
+                    Toggle(UILang.t("优化后自动粘贴回原应用", "Auto-paste result back into the app"),
                            isOn: $autoPaste)
                     TextField(UILang.t("语音识别语言", "Speech locale"), text: $speechLocale,
                               prompt: Text("zh-CN"))

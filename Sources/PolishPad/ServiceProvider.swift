@@ -27,7 +27,7 @@ final class ServiceProvider: NSObject {
         self.quickPolish = quickPolish
     }
 
-    /// 「PolishPad：润色并替换」——声明了返回类型，系统会用写回
+    /// 「PolishPad：优化并替换」——声明了返回类型，系统会用写回
     /// pasteboard 的内容自动替换调用方的选中文本，不需要模拟按键
     @objc func polishSelection(
         _ pboard: NSPasteboard,
@@ -41,7 +41,7 @@ final class ServiceProvider: NSObject {
             return
         }
 
-        Task { @MainActor in HUD.shared.showWorking("润色中…") }
+        Task { @MainActor in HUD.shared.showWorking("优化中…") }
 
         let box = ResultBox()
         Task.detached {
@@ -69,7 +69,7 @@ final class ServiceProvider: NSObject {
         }
     }
 
-    /// 「PolishPad：全选润色并替换」——不声明返回类型，调用方不阻塞，
+    /// 「PolishPad：全选优化并替换」——不声明返回类型，调用方不阻塞，
     /// 由我们模拟 ⌘A/⌘C/⌘V 完成整个流程
     @objc func polishAll(
         _ pboard: NSPasteboard,

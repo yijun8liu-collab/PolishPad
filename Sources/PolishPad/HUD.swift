@@ -12,7 +12,7 @@ enum UILang {
     }
 }
 
-/// 光标旁的悬浮状态提示：不抢焦点、不响应鼠标，用于划词润色的过程反馈
+/// 光标旁的悬浮状态提示：不抢焦点、不响应鼠标，用于划词优化的过程反馈
 @MainActor
 final class HUD {
     static let shared = HUD()

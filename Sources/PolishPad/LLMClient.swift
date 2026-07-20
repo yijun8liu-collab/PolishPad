@@ -48,7 +48,7 @@ enum LLMClient {
         let error: APIError?
     }
 
-    /// 划词/全选替换用的单发润色（无多轮上下文），跟随面板的 中/EN 开关
+    /// 划词/全选替换用的单发优化（无多轮上下文），跟随面板的 中/EN 开关
     static func polishOnce(_ input: String) async throws -> String {
         let config = try ConfigStore.load()
         let english = UserDefaults.standard.bool(forKey: "outputEnglish")
@@ -131,7 +131,7 @@ enum OutputCleaner {
             }
         }
 
-        // "好的，以下是润色后的文本：" 式前言（仅当首行以冒号结尾且后面还有内容）
+        // "好的，以下是优化后的文本：" 式前言（仅当首行以冒号结尾且后面还有内容）
         let lines = text.components(separatedBy: "\n")
         if lines.count > 1 {
             let first = lines[0].trimmingCharacters(in: .whitespaces)
