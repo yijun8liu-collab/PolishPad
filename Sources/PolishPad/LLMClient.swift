@@ -48,6 +48,16 @@ enum LLMClient {
         let error: APIError?
     }
 
+    /// 划词/全选替换用的单发润色（无多轮上下文）
+    static func polishOnce(_ input: String) async throws -> String {
+        let config = try ConfigStore.load()
+        let messages = [
+            ChatMessage(role: "system", content: config.resolvedSystemPrompt),
+            ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
+        ]
+        return try await complete(messages: messages, config: config)
+    }
+
     static func complete(messages: [ChatMessage], config: AppConfig) async throws -> String {
         var base = config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }

@@ -1,10 +1,15 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Carbon 全局快捷键（不需要辅助功能权限）
+/// Carbon 全局快捷键（不需要辅助功能权限），支持多个实例：
+/// 共享一个事件处理器，按 EventHotKeyID 分发到对应实例
 final class GlobalHotKey {
+    private static var registry: [UInt32: GlobalHotKey] = [:]
+    private static var nextId: UInt32 = 1
+    private static var sharedHandlerInstalled = false
+
     private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
+    private let id: UInt32
     var handler: (() -> Void)?
 
     /// 解析 "option+space"、"cmd+shift+p" 这类描述
@@ -38,39 +43,58 @@ final class GlobalHotKey {
     ]
 
     init?(keyCode: UInt32, modifiers: UInt32) {
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-        let selfPointer = Unmanaged.passUnretained(self).toOpaque()
-        let installStatus = InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, userData -> OSStatus in
-                guard let userData else { return noErr }
-                let hotKey = Unmanaged<GlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
-                DispatchQueue.main.async { hotKey.handler?() }
-                return noErr
-            },
-            1,
-            &eventType,
-            selfPointer,
-            &eventHandlerRef
-        )
-        guard installStatus == noErr else { return nil }
+        Self.installSharedHandlerIfNeeded()
+        id = Self.nextId
 
-        let hotKeyID = EventHotKeyID(signature: 0x504C_5348 /* 'PLSH' */, id: 1)
-        let registerStatus = RegisterEventHotKey(
+        let hotKeyID = EventHotKeyID(signature: 0x504C_5348 /* 'PLSH' */, id: id)
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
             keyCode, modifiers, hotKeyID,
-            GetApplicationEventTarget(), 0, &hotKeyRef
+            GetApplicationEventTarget(), 0, &ref
         )
-        guard registerStatus == noErr, hotKeyRef != nil else {
-            if let eventHandlerRef { RemoveEventHandler(eventHandlerRef) }
-            return nil
-        }
+        guard status == noErr, let ref else { return nil }
+
+        hotKeyRef = ref
+        Self.nextId += 1
+        Self.registry[id] = self
     }
 
     deinit {
         if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        if let eventHandlerRef { RemoveEventHandler(eventHandlerRef) }
+        GlobalHotKey.registry[id] = nil
+    }
+
+    private static func installSharedHandlerIfNeeded() {
+        guard !sharedHandlerInstalled else { return }
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, _ -> OSStatus in
+                guard let event else { return noErr }
+                var hotKeyID = EventHotKeyID()
+                GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                let id = hotKeyID.id
+                DispatchQueue.main.async {
+                    GlobalHotKey.registry[id]?.handler?()
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            nil,
+            nil
+        )
+        sharedHandlerInstalled = true
     }
 }

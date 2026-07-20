@@ -7,6 +7,10 @@ struct AppConfig: Codable {
     var temperature: Double?
     var maxTokens: Int?
     var hotkey: String?
+    /// 划词润色替换快捷键，默认 ctrl+option+r
+    var hotkeyPolishSelection: String?
+    /// 全选润色替换快捷键，默认 ctrl+option+a
+    var hotkeyPolishAll: String?
     var systemPrompt: String?
     /// 语音识别语言，如 zh-CN / en-US，默认 zh-CN
     var speechLocale: String?
@@ -57,6 +61,8 @@ enum ConfigStore {
             temperature: 0.3,
             maxTokens: 4096,
             hotkey: "option+space",
+            hotkeyPolishSelection: "ctrl+option+r",
+            hotkeyPolishAll: "ctrl+option+a",
             systemPrompt: nil,
             speechLocale: "zh-CN"
         )

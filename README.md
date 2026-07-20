@@ -33,6 +33,8 @@ After launch, click the ✨ menu bar icon → **Open Config File**, then fill in
   "temperature": 0.3,
   "maxTokens": 4096,
   "hotkey": "option+space",                  // requires app restart after change
+  "hotkeyPolishSelection": "ctrl+option+r",  // polish-selection-in-place hotkey (restart required)
+  "hotkeyPolishAll": "ctrl+option+a",        // select-all-and-polish hotkey (restart required)
   "systemPrompt": null,                      // set a string to override the built-in polishing prompt
   "speechLocale": "zh-CN"                    // speech recognition language (zh-CN / en-US / ...)
 }
@@ -52,6 +54,22 @@ All fields except `hotkey` are re-read on every request — changes take effect 
 7. **Voice input**: press `⌘D` or click the mic button at the bottom left to start/stop dictation. Recognized text streams into the active input box (draft or feedback) in real time; when you're done, just press `Enter` to polish — the missing punctuation and structure in your speech is exactly what the polishing step fixes. First use will request microphone and speech recognition permissions. Uses macOS native recognition; on machines with on-device recognition support, your voice never leaves the Mac
 
 The session is preserved when the panel is dismissed — if you hit Esc by accident, summon it again and everything is still there. Only `⌘N` clears it.
+
+## Polish in place (no panel)
+
+Polish text directly inside any app without leaving the input field:
+
+- **Polish selection**: select text → `⌃⌥R` → replaced in place with the polished version
+- **Select-all polish**: cursor inside a text field → `⌃⌥A` → auto select-all, polish, replace everything
+- **Right-click menu**: select text → right-click → **Services** → "PolishPad：润色并替换" / "PolishPad：全选润色并替换"
+
+While processing, the menu bar icon turns into an hourglass; on success it briefly shows ✓ with a sound. On failure an alert explains what happened and **your original text is never modified**. Capturing/pasting temporarily borrows the clipboard; your previous clipboard content (including images and other non-text data) is restored automatically afterwards.
+
+Notes:
+
+- First use prompts for **Accessibility permission** (required for simulated keystrokes). Enable PolishPad in System Settings → Privacy & Security → Accessibility, then press the hotkey again
+- The right-click Services menu works in native apps (Notes, Safari, Xcode, ...); Electron apps like VS Code draw their own context menus and won't show it — use the hotkeys there
+- The right-click "select-all polish" item only appears when some text is selected (a limitation of the Services mechanism); the hotkey has no such restriction
 
 ## Privacy
 
