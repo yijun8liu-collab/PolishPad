@@ -50,6 +50,8 @@ final class PanelController {
     }
 
     func show() {
+        // 每次唤起都是全新会话（关窗即结束上一次对话）
+        model.resetSession()
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // 出现在鼠标所在屏幕，类 Spotlight 位置（水平居中，偏上）

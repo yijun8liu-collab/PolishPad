@@ -53,7 +53,7 @@ All fields except `hotkey` are re-read on every request — changes take effect 
 6. If a request fails, your input is never lost — use the "Copy Original" button as a fallback
 7. **Voice input**: press `⌘D` or click the mic button at the bottom left to start/stop dictation. Recognized text streams into the active input box (draft or feedback) in real time; when you're done, just press `Enter` to polish — the missing punctuation and structure in your speech is exactly what the polishing step fixes. First use will request microphone and speech recognition permissions. Uses macOS native recognition; on machines with on-device recognition support, your voice never leaves the Mac
 
-The session is preserved when the panel is dismissed — if you hit Esc by accident, summon it again and everything is still there. Only `⌘N` clears it.
+Every summon starts a fresh session — closing the panel ends the previous conversation. While the panel is open, `⌘N` clears and restarts manually.
 
 ## Polish in place (no panel)
 
