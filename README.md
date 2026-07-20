@@ -36,7 +36,8 @@ After launch, click the ✨ menu bar icon → **Open Config File**, then fill in
   "hotkeyRefineSelection": "ctrl+option+r",  // refine selection in place
   "hotkeyRefineAll": "ctrl+option+a",        // select-all and refine
                                              // all three are recordable by keypress in Settings…, apply on save
-  "systemPrompt": null,                      // set a string to override the built-in refining prompt
+  "promptPreset": "polish",                  // scenario preset: polish / slack-english / formal / concise / custom
+  "systemPrompt": null,                      // custom prompt, used when preset is "custom"
   "speechLocale": "zh-CN"                    // speech recognition language (zh-CN / en-US / ...)
 }
 ```
@@ -80,6 +81,6 @@ Your input is sent to the API endpoint you configure. For sensitive content, poi
 
 ## Current scope
 
-Covered: streaming output (results render token-by-token; refine-in-place shows live progress), multi-round refinement with in-place replacement, Add/Edit dual input modes (Tab toggles), auto paste-back, refine-in-place (hotkey / right-click Services / menu bar entries), voice input (macOS native recognition, long pauses safe), 中/EN bilingual mode (output language + UI language + separate native prompts), in-app settings window (hotkeys recordable by keypress, apply on save), cursor-side HUD feedback, IME-safe Enter handling, request cancellation, original preserved on failure, full clipboard snapshot restore, truncation warning, hotkey conflict alert, multi-display, works over full-screen Spaces.
+Covered: scenario presets (refine / Slack English / formal / concise / custom), update checker, streaming output (results render token-by-token; refine-in-place shows live progress), multi-round refinement with in-place replacement, Add/Edit dual input modes (Tab toggles), auto paste-back, refine-in-place (hotkey / right-click Services / menu bar entries), voice input (macOS native recognition, long pauses safe), 中/EN bilingual mode (output language + UI language + separate native prompts), in-app settings window (hotkeys recordable by keypress, apply on save), cursor-side HUD feedback, IME-safe Enter handling, request cancellation, original preserved on failure, full clipboard snapshot restore, truncation warning, hotkey conflict alert, multi-display, works over full-screen Spaces.
 
 Not yet covered (future versions): version switching and rollback, Keychain, native Anthropic protocol, launch at login.

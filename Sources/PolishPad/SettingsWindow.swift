@@ -23,7 +23,15 @@ struct SettingsView: View {
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @State private var testing = false
+    @State private var promptPreset = "polish"
+    @State private var updateStatus = ""
+    @State private var updateURL: String?
+    @State private var checkingUpdate = false
     @StateObject private var recorder = HotkeyRecorderCoordinator()
+
+    private var appVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,11 +83,57 @@ struct SettingsView: View {
                               prompt: Text("zh-CN"))
                 }
 
-                Section(UILang.t("系统提示词（留空使用内置双语版本）",
-                                 "System prompt (empty = built-in bilingual)")) {
-                    TextEditor(text: $systemPrompt)
-                        .font(.system(size: 12))
-                        .frame(height: 100)
+                Section(UILang.t("场景预设", "Scenario Preset")) {
+                    Picker(UILang.t("场景", "Scenario"), selection: $promptPreset) {
+                        ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                            Text(UILang.t(preset.labelZH, preset.labelEN)).tag(preset.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Text(UILang.t(
+                        (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionZH,
+                        (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionEN
+                    ))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                    if promptPreset == PromptPreset.custom.rawValue {
+                        TextEditor(text: $systemPrompt)
+                            .font(.system(size: 12))
+                            .frame(height: 100)
+                        Text(UILang.t("留空则回退到内置优化提示词",
+                                      "Leave empty to fall back to the built-in refine prompt"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Section(UILang.t("更新", "Updates")) {
+                    HStack {
+                        Text(UILang.t("当前版本", "Current version") + "  v\(appVersion)")
+                        Spacer()
+                        if let updateURL {
+                            Button(UILang.t("前往下载", "Download Update")) {
+                                if let url = URL(string: updateURL) {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .controlSize(.small)
+                        } else {
+                            Button(checkingUpdate
+                                   ? UILang.t("检查中…", "Checking…")
+                                   : UILang.t("检查更新", "Check for Updates")) {
+                                checkForUpdates()
+                            }
+                            .controlSize(.small)
+                            .disabled(checkingUpdate)
+                        }
+                    }
+                    if !updateStatus.isEmpty {
+                        Text(updateStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -126,6 +180,11 @@ struct SettingsView: View {
         speechLocale = config.speechLocale ?? "zh-CN"
         autoPaste = config.autoPaste ?? true
         systemPrompt = config.systemPrompt ?? ""
+        promptPreset = config.promptPreset ?? "polish"
+        // 老配置：之前填过自定义提示词的用户视为自定义场景
+        if config.promptPreset == nil, !(config.systemPrompt ?? "").isEmpty {
+            promptPreset = PromptPreset.custom.rawValue
+        }
     }
 
     private func buildConfig() -> AppConfig {
@@ -138,6 +197,7 @@ struct SettingsView: View {
             temperature: temperature,
             maxTokens: Int(maxTokensText.trimmingCharacters(in: .whitespaces)) ?? 4096,
             hotkey: hotkeyPanel.trimmingCharacters(in: .whitespaces),
+            promptPreset: promptPreset,
             hotkeyPolishSelection: hotkeySelection.trimmingCharacters(in: .whitespaces),
             hotkeyPolishAll: hotkeyAll.trimmingCharacters(in: .whitespaces),
             systemPrompt: prompt.isEmpty ? nil : prompt,
@@ -170,6 +230,48 @@ struct SettingsView: View {
             statusMessage = UILang.t("保存失败：", "Save failed: ") + error.localizedDescription
             statusIsError = true
         }
+    }
+
+    private func checkForUpdates() {
+        checkingUpdate = true
+        updateStatus = ""
+        Task {
+            defer { checkingUpdate = false }
+            struct Release: Decodable {
+                let tag_name: String
+                let html_url: String
+            }
+            do {
+                var request = URLRequest(url: URL(
+                    string: "https://api.github.com/repos/yijun8liu-collab/PolishPad/releases/latest")!)
+                request.timeoutInterval = 15
+                let (data, _) = try await URLSession.shared.data(for: request)
+                let release = try JSONDecoder().decode(Release.self, from: data)
+                let latest = release.tag_name.hasPrefix("v")
+                    ? String(release.tag_name.dropFirst()) : release.tag_name
+                if Self.isVersion(latest, newerThan: appVersion) {
+                    updateURL = release.html_url
+                    updateStatus = UILang.t("发现新版本 \(release.tag_name)，点击「前往下载」获取",
+                                            "New version \(release.tag_name) available")
+                } else {
+                    updateStatus = UILang.t("✅ 已是最新版本", "✅ You're up to date")
+                }
+            } catch {
+                updateStatus = UILang.t("检查失败：", "Check failed: ") + error.localizedDescription
+            }
+        }
+    }
+
+    /// 简单语义化版本比较（0.3.0 < 0.4.0 < 0.4.1）
+    static func isVersion(_ a: String, newerThan b: String) -> Bool {
+        let pa = a.split(separator: ".").compactMap { Int($0) }
+        let pb = b.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y }
+        }
+        return false
     }
 
     private func testConnection() {
