@@ -95,9 +95,15 @@ enum UsageStore {
 
 enum KeychainStore {
     private static let service = "PolishPad"
+    /// 进程内缓存：每次启动最多触发一次钥匙串读取（避免每个请求都弹授权框）
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: String] = [:]
 
     static func set(_ value: String, account: String = "apiKey") {
-        delete(account: account)
+        cacheLock.lock()
+        cache[account] = value
+        cacheLock.unlock()
+        delete(account: account, clearCache: false)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -108,6 +114,13 @@ enum KeychainStore {
     }
 
     static func get(account: String = "apiKey") -> String? {
+        cacheLock.lock()
+        if let cached = cache[account] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -117,11 +130,20 @@ enum KeychainStore {
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8) else { return nil }
+        cacheLock.lock()
+        cache[account] = value
+        cacheLock.unlock()
+        return value
     }
 
-    static func delete(account: String = "apiKey") {
+    static func delete(account: String = "apiKey", clearCache: Bool = true) {
+        if clearCache {
+            cacheLock.lock()
+            cache[account] = nil
+            cacheLock.unlock()
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
