@@ -9,6 +9,7 @@ struct SubmitTextEditor: NSViewRepresentable {
     @Binding var text: String
     var isEditable: Bool = true
     var fontSize: CGFloat = 14
+    var inset: NSSize = NSSize(width: 6, height: 8)
     /// 非零且变化时抢占键盘焦点
     var focusToken: Int = 0
     var onSubmit: () -> Void = {}
@@ -26,7 +27,7 @@ struct SubmitTextEditor: NSViewRepresentable {
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = .systemFont(ofSize: fontSize)
-        textView.textContainerInset = NSSize(width: 6, height: 8)
+        textView.textContainerInset = inset
         textView.drawsBackground = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
