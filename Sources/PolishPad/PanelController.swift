@@ -35,7 +35,7 @@ final class PanelController {
         model.onRequestClose = { [weak self] in self?.hide() }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
         model.onAutoPaste = { [weak self] replacePrevious in
-            self?.hideAndPaste(replacePrevious: replacePrevious)
+            self?.pasteAndReturn(replacePrevious: replacePrevious)
         }
     }
 
@@ -78,6 +78,55 @@ final class PanelController {
             app.activate()
         }
         previousApp = nil
+    }
+
+    /// 面板保持打开：激活原应用 → 粘贴（纠偏轮先 ⌘Z 撤销上一版）→ 焦点回到面板，
+    /// 用户可以立即输入下一轮纠偏
+    func pasteAndReturn(replacePrevious: Bool) {
+        guard let app = previousApp, !app.isTerminated else {
+            HUD.shared.hide()
+            model.bumpFocus()
+            return
+        }
+        guard KeySimulator.ensureAccessibilityPermission() else {
+            model.bumpFocus()
+            return
+        }
+
+        app.activate()
+        Task { @MainActor in
+            var activated = false
+            for _ in 0..<20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    == app.processIdentifier {
+                    activated = true
+                    break
+                }
+                app.activate()
+            }
+            if activated {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if replacePrevious {
+                    KeySimulator.postCommandKey(KeySimulator.keyZ)
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+                KeySimulator.postCommandKey(KeySimulator.keyV)
+                HUD.shared.flashSuccess(replacePrevious
+                    ? UILang.t("已替换", "Replaced")
+                    : UILang.t("已粘贴", "Pasted"))
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            } else {
+                HUD.shared.flashSuccess(UILang.t(
+                    "已复制（未能切回原应用，请手动粘贴）",
+                    "Copied (couldn't reactivate the app — paste manually)"
+                ))
+            }
+            // 焦点回到面板，随时输入下一轮纠偏
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            model.bumpFocus()
+        }
     }
 
     /// 关窗 → 激活原应用 → 自动粘贴（结果已在剪贴板）。

@@ -163,8 +163,8 @@ struct SessionView: View {
                 .frame(height: 64)
 
                 if model.feedback.isEmpty {
-                    Text(model.t("说怎么改，Enter 发送并替换已粘贴的内容",
-                                 "Describe changes; Enter sends and replaces the pasted text"))
+                    Text(model.t("说怎么改，Enter 原地替换；留空 Enter 或 Esc 结束",
+                                 "Describe changes — Enter replaces in place; empty Enter or Esc to finish"))
                         .font(.system(size: 13))
                         .foregroundColor(Color.secondary.opacity(0.7))
                         .padding(.top, 8)
