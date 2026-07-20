@@ -76,7 +76,16 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 EOF
 
 cp .build/release/PolishPad "$APP/Contents/MacOS/PolishPad"
-codesign --force --sign - "$APP" 2>/dev/null || true
+
+# 优先使用固定的自签名证书（TCC 授权可跨版本存活），否则退回 ad-hoc
+SIGN_IDENTITY="PolishPad Dev"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    codesign --force --sign "$SIGN_IDENTITY" "$APP"
+    echo "已使用证书签名：$SIGN_IDENTITY"
+else
+    codesign --force --sign - "$APP" 2>/dev/null || true
+    echo "未找到「$SIGN_IDENTITY」证书，使用 ad-hoc 签名（每次重打包需重新授权辅助功能）"
+fi
 
 # 刷新系统服务缓存，让右键菜单的「服务」项尽快出现
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(pwd)/$APP" 2>/dev/null || true
