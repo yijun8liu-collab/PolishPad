@@ -29,6 +29,8 @@ final class SessionModel: ObservableObject {
     private var dictationBase = ""
 
     var onRequestClose: (() -> Void)?
+    /// 关窗并自动粘贴回原应用
+    var onRequestCloseAndPaste: (() -> Void)?
 
     init() {
         speech.onStateChange = { [weak self] recording in
@@ -95,11 +97,28 @@ final class SessionModel: ObservableObject {
         run(requestMessages: requestMessages, config: config)
     }
 
+    /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
+    func requestCloseAndPaste() {
+        guard !currentResult.isEmpty else {
+            onRequestClose?()
+            return
+        }
+        if ConfigStore.loadRaw()?.autoPaste ?? true {
+            onRequestCloseAndPaste?()
+        } else {
+            onRequestClose?()
+        }
+    }
+
     func submitFeedback() {
         guard !isLoading, phase == .reviewing else { return }
         stopDictation()
         let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty else { return }
+        // 空反馈按 Enter = 对结果满意，直接贴回原应用
+        guard !note.isEmpty else {
+            requestCloseAndPaste()
+            return
+        }
         let config: AppConfig
         do {
             config = try ConfigStore.load()

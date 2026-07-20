@@ -33,6 +33,7 @@ final class PanelController {
         panel.contentView = hosting
 
         model.onRequestClose = { [weak self] in self?.hide() }
+        model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -74,5 +75,22 @@ final class PanelController {
             app.activate()
         }
         previousApp = nil
+    }
+
+    /// 关窗 → 激活原应用 → 自动粘贴（结果已在剪贴板）
+    func hideAndPaste() {
+        let target = previousApp
+        model.stopDictation()
+        panel.orderOut(nil)
+        previousApp = nil
+
+        guard let app = target, !app.isTerminated else { return }
+        app.activate()
+        // 等原应用完成激活、焦点回到输入框后再粘贴
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard KeySimulator.ensureAccessibilityPermission() else { return }
+            KeySimulator.postCommandKey(KeySimulator.keyV)
+            HUD.shared.flashSuccess("已粘贴")
+        }
     }
 }

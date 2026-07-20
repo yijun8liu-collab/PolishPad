@@ -110,7 +110,7 @@ struct SessionView: View {
                 .frame(height: 64)
 
                 if model.feedback.isEmpty {
-                    Text("不满意？在这里说怎么改，Enter 发送…")
+                    Text("说怎么改，Enter 发送；留空直接 Enter = 粘贴回原应用")
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                         .padding(.top, 8)
@@ -161,6 +161,9 @@ struct SessionView: View {
             Spacer()
             if model.phase == .reviewing {
                 Button("再次复制") { model.copyResultAgain() }
+                    .controlSize(.small)
+                    .disabled(model.isLoading)
+                Button("粘贴回原应用") { model.requestCloseAndPaste() }
                     .controlSize(.small)
                     .disabled(model.isLoading)
             }

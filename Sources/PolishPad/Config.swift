@@ -14,6 +14,8 @@ struct AppConfig: Codable {
     var systemPrompt: String?
     /// 语音识别语言，如 zh-CN / en-US，默认 zh-CN
     var speechLocale: String?
+    /// 审阅态下空反馈按 Enter 时，是否自动切回原应用并粘贴，默认 true
+    var autoPaste: Bool?
 
     static let defaultSystemPrompt = """
     你是一个文本重写工具。用户会给你一段口语化、逻辑松散的文字（通常是想发给 AI 助手的指令）。
@@ -64,7 +66,8 @@ enum ConfigStore {
             hotkeyPolishSelection: "ctrl+option+r",
             hotkeyPolishAll: "ctrl+option+a",
             systemPrompt: nil,
-            speechLocale: "zh-CN"
+            speechLocale: "zh-CN",
+            autoPaste: true
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
