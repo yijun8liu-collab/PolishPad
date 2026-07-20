@@ -13,7 +13,7 @@ struct SettingsView: View {
     @State private var modelName = ""
     @State private var temperature = 0.3
     @State private var maxTokensText = "4096"
-    @State private var hotkeyPanel = "option+space"
+    @State private var hotkeyPanel = "ctrl+option+p"
     @State private var hotkeySelection = "ctrl+option+r"
     @State private var hotkeyAll = "ctrl+option+a"
     @State private var speechLocale = "zh-CN"
@@ -113,7 +113,7 @@ struct SettingsView: View {
         modelName = config.model
         temperature = config.temperature ?? 0.3
         maxTokensText = String(config.maxTokens ?? 4096)
-        hotkeyPanel = config.hotkey ?? "option+space"
+        hotkeyPanel = config.hotkey ?? "ctrl+option+p"
         hotkeySelection = config.hotkeyPolishSelection ?? "ctrl+option+r"
         hotkeyAll = config.hotkeyPolishAll ?? "ctrl+option+a"
         speechLocale = config.speechLocale ?? "zh-CN"

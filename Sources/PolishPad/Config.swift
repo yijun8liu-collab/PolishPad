@@ -91,7 +91,7 @@ enum ConfigStore {
             model: "gpt-4o-mini",
             temperature: 0.3,
             maxTokens: 4096,
-            hotkey: "option+space",
+            hotkey: "ctrl+option+p",
             hotkeyPolishSelection: "ctrl+option+r",
             hotkeyPolishAll: "ctrl+option+a",
             systemPrompt: nil,

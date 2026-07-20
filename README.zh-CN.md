@@ -32,7 +32,7 @@ open PolishPad.app
   "model": "gpt-4o-mini",
   "temperature": 0.3,
   "maxTokens": 4096,
-  "hotkey": "option+space",                  // 修改后需重启应用
+  "hotkey": "ctrl+option+p",                 // 也可在 设置… 界面修改，保存即生效
   "hotkeyPolishSelection": "ctrl+option+r",  // 划词润色替换快捷键（需重启）
   "hotkeyPolishAll": "ctrl+option+a",        // 全选润色替换快捷键（需重启）
   "systemPrompt": null,                      // 填字符串可覆盖内置润色提示词
@@ -45,7 +45,7 @@ open PolishPad.app
 
 ## 使用
 
-1. 光标停在任意输入框 → `⌥ + Space` 唤起面板（再按一次收起）
+1. 光标停在任意输入框 → `⌃⌥P` 唤起面板（再按一次收起）
 2. 输入原始内容，`Enter` 提交（`Shift+Enter` 换行，中文输入法组字中的回车不会误触发）
 3. 润色完成后**自动粘贴回唤起前的应用**，面板保持打开、焦点回到纠偏框
 4. 不满意 → 直接输入修改意见按 `Enter`——新版本会先撤销上一次粘贴再贴入，**原地替换**；满意 → 留空按 `Enter`、`Esc` 或右上角 ✕ 结束，焦点留在原应用

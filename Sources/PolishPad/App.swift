@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickPolish: QuickPolishController!
     private var serviceProvider: ServiceProvider!
     private var hotKeys: [GlobalHotKey] = []
-    private var panelHotkeySpec = "option+space"
+    private var panelHotkeySpec = "ctrl+option+p"
     private var selectionHotkeySpec = "ctrl+option+r"
     private var allHotkeySpec = "ctrl+option+a"
 
@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupHotKeys() {
         let config = ConfigStore.loadRaw()
-        panelHotkeySpec = config?.hotkey ?? "option+space"
+        panelHotkeySpec = config?.hotkey ?? "ctrl+option+p"
         selectionHotkeySpec = config?.hotkeyPolishSelection ?? "ctrl+option+r"
         allHotkeySpec = config?.hotkeyPolishAll ?? "ctrl+option+a"
 

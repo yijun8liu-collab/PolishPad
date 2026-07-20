@@ -32,7 +32,7 @@ After launch, click the ✨ menu bar icon → **Open Config File**, then fill in
   "model": "gpt-4o-mini",
   "temperature": 0.3,
   "maxTokens": 4096,
-  "hotkey": "option+space",                  // requires app restart after change
+  "hotkey": "ctrl+option+p",                 // also editable in Settings…, applies on save
   "hotkeyPolishSelection": "ctrl+option+r",  // polish-selection-in-place hotkey (restart required)
   "hotkeyPolishAll": "ctrl+option+a",        // select-all-and-polish hotkey (restart required)
   "systemPrompt": null,                      // set a string to override the built-in polishing prompt
@@ -45,7 +45,7 @@ All fields except `hotkey` are re-read on every request — changes take effect 
 
 ## Usage
 
-1. Put the cursor in any text field → press `⌥ + Space` to summon the panel (press again to dismiss)
+1. Put the cursor in any text field → press `⌃⌥P` to summon the panel (press again to dismiss)
 2. Type your raw input, press `Enter` to submit (`Shift+Enter` for newline; pressing Enter while composing with an IME won't accidentally submit)
 3. When polishing finishes, the result is **automatically pasted back into the originating app**; the panel stays open with focus back in the feedback box
 4. Not satisfied? Type what to change and press `Enter` — the new version undoes the previous paste and replaces it **in place**. Satisfied? Press `Enter` with an empty box, `Esc`, or the ✕ button to finish; focus stays in your app
