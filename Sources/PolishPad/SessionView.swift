@@ -110,7 +110,7 @@ struct SessionView: View {
                 .frame(height: 64)
 
                 if model.feedback.isEmpty {
-                    Text("说怎么改，Enter 发送；留空直接 Enter = 粘贴回原应用")
+                    Text("说怎么改，Enter 发送并替换已粘贴的内容")
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                         .padding(.top, 8)

@@ -34,6 +34,9 @@ final class PanelController {
 
         model.onRequestClose = { [weak self] in self?.hide() }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
+        model.onAutoPaste = { [weak self] replacePrevious in
+            self?.hideAndPaste(replacePrevious: replacePrevious)
+        }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -77,8 +80,9 @@ final class PanelController {
         previousApp = nil
     }
 
-    /// 关窗 → 激活原应用 → 自动粘贴（结果已在剪贴板）
-    func hideAndPaste() {
+    /// 关窗 → 激活原应用 → 自动粘贴（结果已在剪贴板）。
+    /// replacePrevious 为 true 时先 ⌘Z 撤销上一次粘贴，实现原地替换
+    func hideAndPaste(replacePrevious: Bool = false) {
         let target = previousApp
         model.stopDictation()
         panel.orderOut(nil)
@@ -109,8 +113,12 @@ final class PanelController {
             }
             // 再留一点时间让焦点落回输入框
             try? await Task.sleep(nanoseconds: 200_000_000)
+            if replacePrevious {
+                KeySimulator.postCommandKey(KeySimulator.keyZ)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
             KeySimulator.postCommandKey(KeySimulator.keyV)
-            HUD.shared.flashSuccess("已粘贴")
+            HUD.shared.flashSuccess(replacePrevious ? "已替换" : "已粘贴")
         }
     }
 }

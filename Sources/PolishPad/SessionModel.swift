@@ -31,6 +31,10 @@ final class SessionModel: ObservableObject {
     var onRequestClose: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
+    /// 润色成功即自动贴回；replacePrevious 为 true 时先 ⌘Z 撤销上次粘贴
+    var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
+    /// 本会话是否已经自动粘贴过（决定下次是否先撤销）
+    private var hasAutoPasted = false
 
     init() {
         speech.onStateChange = { [weak self] recording in
@@ -103,6 +107,11 @@ final class SessionModel: ObservableObject {
             onRequestClose?()
             return
         }
+        // 极速模式下结果已经贴回去了，空 Enter 只需关窗
+        if hasAutoPasted {
+            onRequestClose?()
+            return
+        }
         if ConfigStore.loadRaw()?.autoPaste ?? true {
             onRequestCloseAndPaste?()
         } else {
@@ -168,7 +177,15 @@ final class SessionModel: ObservableObject {
         feedback = ""
         isLoading = false
         phase = .reviewing
-        bumpFocus()
+
+        if ConfigStore.loadRaw()?.autoPaste ?? true {
+            // 极速模式：出结果直接贴回原应用；纠偏轮次先撤销上一版再贴
+            let replacePrevious = hasAutoPasted
+            hasAutoPasted = true
+            onAutoPaste?(replacePrevious)
+        } else {
+            bumpFocus()
+        }
     }
 
     private func handleFailure(_ error: Error) {
@@ -209,6 +226,7 @@ final class SessionModel: ObservableObject {
         errorMessage = nil
         version = 0
         messages = []
+        hasAutoPasted = false
         bumpFocus()
     }
 

@@ -6,6 +6,7 @@ enum KeySimulator {
     static let keyA: CGKeyCode = 0
     static let keyC: CGKeyCode = 8
     static let keyV: CGKeyCode = 9
+    static let keyZ: CGKeyCode = 6
 
     /// 检查辅助功能权限，未授权时弹出系统引导框
     static func ensureAccessibilityPermission() -> Bool {
