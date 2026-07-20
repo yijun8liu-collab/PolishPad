@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @State private var testing = false
+    @StateObject private var recorder = HotkeyRecorderCoordinator()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,11 +54,14 @@ struct SettingsView: View {
 
                 Section(UILang.t("快捷键（保存后立即生效）", "Hotkeys (apply on save)")) {
                     HotkeyRecorderField(
-                        label: UILang.t("润色窗口", "Polish panel"), spec: $hotkeyPanel)
+                        label: UILang.t("润色窗口", "Polish panel"),
+                        spec: $hotkeyPanel, coordinator: recorder)
                     HotkeyRecorderField(
-                        label: UILang.t("划词润色替换", "Polish selection"), spec: $hotkeySelection)
+                        label: UILang.t("划词润色替换", "Polish selection"),
+                        spec: $hotkeySelection, coordinator: recorder)
                     HotkeyRecorderField(
-                        label: UILang.t("全选润色替换", "Select-all polish"), spec: $hotkeyAll)
+                        label: UILang.t("全选润色替换", "Select-all polish"),
+                        spec: $hotkeyAll, coordinator: recorder)
                     Text(UILang.t("点击后直接按下新的组合键（至少含一个修饰键）",
                                   "Click, then press the new combination (needs at least one modifier)"))
                         .font(.caption)
