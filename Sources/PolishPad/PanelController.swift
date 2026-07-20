@@ -84,11 +84,31 @@ final class PanelController {
         panel.orderOut(nil)
         previousApp = nil
 
-        guard let app = target, !app.isTerminated else { return }
+        guard let app = target, !app.isTerminated else {
+            HUD.shared.hide()
+            return
+        }
+        guard KeySimulator.ensureAccessibilityPermission() else { return }
+
         app.activate()
-        // 等原应用完成激活、焦点回到输入框后再粘贴
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            guard KeySimulator.ensureAccessibilityPermission() else { return }
+        Task { @MainActor in
+            // 轮询确认原应用真的回到前台（最多 2s），而不是赌一个固定延迟
+            var activated = false
+            for _ in 0..<20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    == app.processIdentifier {
+                    activated = true
+                    break
+                }
+                app.activate()
+            }
+            guard activated else {
+                HUD.shared.flashSuccess("已复制（未能切回原应用，请手动粘贴）")
+                return
+            }
+            // 再留一点时间让焦点落回输入框
+            try? await Task.sleep(nanoseconds: 200_000_000)
             KeySimulator.postCommandKey(KeySimulator.keyV)
             HUD.shared.flashSuccess("已粘贴")
         }
