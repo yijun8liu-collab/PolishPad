@@ -23,12 +23,25 @@ struct SessionView: View {
         }
         .frame(width: 680)
         .background(
-            VisualEffectBackground()
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            ZStack {
+                VisualEffectBackground()
+                // 提亮层：把 HUD 玻璃从近黑拉到炭灰，同时保留透出的壁纸色
+                LinearGradient(
+                    colors: [Color.white.opacity(0.11), Color.white.opacity(0.045)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.1)],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         )
         .overlay(hiddenShortcuts)
     }
@@ -292,11 +305,11 @@ struct SessionView: View {
     }
 }
 
-/// 毛玻璃背景
+/// 暗夜玻璃背景（HUD 材质，配合面板的固定深色外观）
 struct VisualEffectBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .popover
+        view.material = .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
         return view

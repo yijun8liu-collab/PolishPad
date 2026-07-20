@@ -30,6 +30,8 @@ final class PanelController {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
+        // 暗夜玻璃：面板固定深色外观（不随系统主题），保证深玻璃 + 浅色文字的稳定对比
+        panel.appearance = NSAppearance(named: .darkAqua)
 
         let hosting = NSHostingView(rootView: SessionView(model: model))
         panel.contentView = hosting
