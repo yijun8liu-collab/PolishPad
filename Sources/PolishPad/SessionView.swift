@@ -4,7 +4,7 @@ struct SessionView: View {
     @ObservedObject var model: SessionModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             header
 
             if model.phase == .composing {
@@ -23,23 +23,52 @@ struct SessionView: View {
         .frame(width: 640)
         .background(
             VisualEffectBackground()
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.25), Color.primary.opacity(0.1)],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         )
     }
 
-    // MARK: - Sections
+    // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "wand.and.stars")
-                .foregroundColor(.accentColor)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.accentColor, Color.purple],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                )
+
             Text("PolishPad")
-                .font(.headline)
+                .font(.system(size: 14, weight: .semibold))
+
+            if model.version > 0 {
+                Text("v\(model.version)")
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
+
             Spacer()
+
             if model.isRecording {
                 HStack(spacing: 4) {
                     Image(systemName: "mic.fill")
@@ -48,17 +77,25 @@ struct SessionView: View {
                 .font(.caption)
                 .foregroundColor(.red)
             }
-            if model.version > 0 {
-                Text("v\(model.version)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
+
             if model.isLoading {
                 ProgressView()
                     .controlSize(.small)
             }
+
+            // 输出语言开关：中 = 保持原文语言，EN = 输出英文
+            Picker("", selection: $model.outputEnglish) {
+                Text("中").tag(false)
+                Text("EN").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 84)
+            .labelsHidden()
+            .help("润色输出语言：中 = 保持原文语言，EN = 输出英文（多轮中途切换也生效）")
         }
     }
+
+    // MARK: - Body sections
 
     private var composingBody: some View {
         ZStack(alignment: .topLeading) {
@@ -69,11 +106,11 @@ struct SessionView: View {
                 onSubmit: { model.submitDraft() },
                 onCancel: { model.handleEscape() }
             )
-            .frame(height: 160)
+            .frame(height: 170)
 
             if model.draft.isEmpty {
-                Text("输入要润色的内容…")
-                    .foregroundColor(.secondary)
+                Text("输入要润色的内容，Enter 提交…")
+                    .foregroundColor(Color.secondary.opacity(0.7))
                     .padding(.top, 8)
                     .padding(.leading, 8)
                     .allowsHitTesting(false)
@@ -85,9 +122,13 @@ struct SessionView: View {
     private var reviewingBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !model.statusText.isEmpty {
-                Text(model.statusText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: 10))
+                    Text(model.statusText)
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             SubmitTextEditor(
@@ -96,7 +137,7 @@ struct SessionView: View {
                 onCancel: { model.handleEscape() }
             )
             .frame(height: 260)
-            .background(inputBackground)
+            .background(resultBackground)
 
             ZStack(alignment: .topLeading) {
                 SubmitTextEditor(
@@ -112,7 +153,7 @@ struct SessionView: View {
                 if model.feedback.isEmpty {
                     Text("说怎么改，Enter 发送并替换已粘贴的内容")
                         .font(.system(size: 13))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(Color.secondary.opacity(0.7))
                         .padding(.top, 8)
                         .padding(.leading, 8)
                         .allowsHitTesting(false)
@@ -135,13 +176,21 @@ struct SessionView: View {
                     .controlSize(.small)
             }
         }
-        .padding(8)
-        .background(Color.orange.opacity(0.12))
-        .cornerRadius(8)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.25))
+        )
     }
 
+    // MARK: - Footer
+
     private var footer: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 model.toggleDictation()
             } label: {
@@ -157,8 +206,10 @@ struct SessionView: View {
                  ? "Enter 提交 · ⌘D 语音 · Esc 关闭"
                  : "Enter 发送纠偏 · ⌘D 语音 · Esc 关闭")
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(Color.secondary.opacity(0.8))
+
             Spacer()
+
             if model.phase == .reviewing {
                 Button("再次复制") { model.copyResultAgain() }
                     .controlSize(.small)
@@ -173,9 +224,25 @@ struct SessionView: View {
         }
     }
 
+    // MARK: - Backgrounds
+
     private var inputBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color.primary.opacity(0.05))
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.primary.opacity(0.045))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08))
+            )
+    }
+
+    /// 结果区带一点强调色，和输入区区分开
+    private var resultBackground: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.accentColor.opacity(0.05))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.15))
+            )
     }
 }
 

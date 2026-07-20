@@ -18,6 +18,10 @@ final class SessionModel: ObservableObject {
     /// 变化时对应编辑框抢焦点（0 表示不抢）
     @Published var focusToken = 0
     @Published var isRecording = false
+    /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
+    @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
+        didSet { UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish") }
+    }
 
     private(set) var version = 0
     /// 已提交成功的完整对话（system + input + 每轮 feedback/assistant）
@@ -95,10 +99,19 @@ final class SessionModel: ObservableObject {
             return
         }
         let requestMessages = [
-            ChatMessage(role: "system", content: config.resolvedSystemPrompt),
+            ChatMessage(role: "system", content: systemContent(config)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
         run(requestMessages: requestMessages, config: config)
+    }
+
+    private func systemContent(_ config: AppConfig) -> String {
+        var prompt = config.resolvedSystemPrompt
+        if outputEnglish {
+            prompt += "\n\n输出语言要求：无论原文是什么语言，重写结果必须用地道、自然的英文输出"
+                + "（代码、命令、URL、专有名词原样保留）。此要求优先于上面关于保持原文语言的规则。"
+        }
+        return prompt
     }
 
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
@@ -136,7 +149,12 @@ final class SessionModel: ObservableObject {
             return
         }
         // 失败时不污染已有会话：本轮消息成功后才提交进 messages
-        let requestMessages = messages + [
+        // 系统消息按当前语言开关重建，中途切换 中/EN 也能即时生效
+        var base = messages
+        if let first = base.first, first.role == "system" {
+            base[0] = ChatMessage(role: "system", content: systemContent(config))
+        }
+        let requestMessages = base + [
             ChatMessage(role: "user", content: "<feedback>\n\(note)\n</feedback>")
         ]
         run(requestMessages: requestMessages, config: config)
