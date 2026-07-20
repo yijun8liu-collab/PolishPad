@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var selectionHotkeySpec = "ctrl+option+r"
     private var allHotkeySpec = "ctrl+option+a"
 
+    private let settingsController = SettingsWindowController()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
         panelController = PanelController()
@@ -19,6 +21,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         setupStatusItem()
         setupServices()
+        setupNotifications()
+    }
+
+    private func setupNotifications() {
+        NotificationCenter.default.addObserver(
+            forName: .polishPadOpenSettings, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.settingsController.show() }
+        }
+        // 保存设置后热重载：快捷键重新注册、菜单标题刷新，无需重启
+        NotificationCenter.default.addObserver(
+            forName: .polishPadSettingsSaved, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.reloadHotKeysAndMenu() }
+        }
+    }
+
+    private func reloadHotKeysAndMenu() {
+        hotKeys.removeAll() // deinit 中注销旧的 Carbon 热键
+        setupHotKeys()
+        statusItem.menu = buildMenu()
     }
 
     private func setupQuickPolish() {
@@ -78,7 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setStatusIcon("wand.and.stars")
+        statusItem.menu = buildMenu()
+    }
 
+    private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let openItem = NSMenuItem(
             title: "打开润色窗口（\(panelHotkeySpec)）",
@@ -102,6 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(allItem)
 
         menu.addItem(.separator())
+        let settingsItem = NSMenuItem(
+            title: "设置…", action: #selector(openSettings), keyEquivalent: ""
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         let configItem = NSMenuItem(
             title: "打开配置文件", action: #selector(openConfig), keyEquivalent: ""
         )
@@ -113,7 +145,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "退出 PolishPad",
             action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
         ))
-        statusItem.menu = menu
+        return menu
+    }
+
+    @objc private func openSettings() {
+        settingsController.show()
     }
 
     /// 注册系统「服务」（右键 → 服务 → PolishPad：…）

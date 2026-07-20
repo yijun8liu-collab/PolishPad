@@ -95,6 +95,16 @@ struct SessionView: View {
                           "中 = keep original language, EN = English output (UI language follows)"))
 
             Button {
+                NotificationCenter.default.post(name: .polishPadOpenSettings, object: nil)
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color.secondary.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .help(model.t("设置", "Settings"))
+
+            Button {
                 model.forceClose()
             } label: {
                 Image(systemName: "xmark.circle.fill")

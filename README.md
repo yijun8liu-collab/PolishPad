@@ -45,13 +45,14 @@ All fields except `hotkey` are re-read on every request — changes take effect 
 
 ## Usage
 
-1. Press `⌥ + Space` to summon the input panel (press again to dismiss)
+1. Put the cursor in any text field → press `⌥ + Space` to summon the panel (press again to dismiss)
 2. Type your raw input, press `Enter` to submit (`Shift+Enter` for newline; pressing Enter while composing with an IME won't accidentally submit)
-3. The result is **automatically copied to the clipboard** — switch back to your app and `⌘V`
-4. Not satisfied? Describe what to change in the feedback box below, press `Enter`, and the new version is copied automatically again
-5. `Esc` closes the panel (stops dictation first if recording, cancels the request first if one is in flight); `⌘N` clears the session and starts over
-6. If a request fails, your input is never lost — use the "Copy Original" button as a fallback
-7. **Voice input**: press `⌘D` or click the mic button at the bottom left to start/stop dictation. Recognized text streams into the active input box (draft or feedback) in real time; when you're done, just press `Enter` to polish — the missing punctuation and structure in your speech is exactly what the polishing step fixes. First use will request microphone and speech recognition permissions. Uses macOS native recognition; on machines with on-device recognition support, your voice never leaves the Mac
+3. When polishing finishes, the result is **automatically pasted back into the originating app**; the panel stays open with focus back in the feedback box
+4. Not satisfied? Type what to change and press `Enter` — the new version undoes the previous paste and replaces it **in place**. Satisfied? Press `Enter` with an empty box, `Esc`, or the ✕ button to finish; focus stays in your app
+5. The **中/EN switch** (top right): EN mode outputs English (using a native English system prompt) and switches the UI language too; the choice is remembered, and polish-in-place mode follows it
+6. If a request fails your input is never lost — use "Copy Original" as a fallback; every round's result is also on the clipboard
+7. **Voice input**: press `⌘D` or click the mic button to start/stop dictation; recognized text streams into the active input box in real time and long pauses don't lose earlier content. First use requests microphone and speech recognition permissions; uses macOS native recognition — with on-device support your voice never leaves the Mac
+8. Don't want auto-paste? Set `autoPaste` to `false` in the config to return to clipboard-only mode
 
 Every summon starts a fresh session — closing the panel ends the previous conversation. While the panel is open, `⌘N` clears and restarts manually.
 
@@ -62,8 +63,9 @@ Polish text directly inside any app without leaving the input field:
 - **Polish selection**: select text → `⌃⌥R` → replaced in place with the polished version
 - **Select-all polish**: cursor inside a text field → `⌃⌥A` → auto select-all, polish, replace everything
 - **Right-click menu**: select text → right-click → **Services** → "PolishPad：润色并替换" / "PolishPad：全选润色并替换"
+- **Menu bar entry**: click the ✨ icon → polish-selection / select-all-polish items (the latter needs no prior selection)
 
-While processing, the menu bar icon turns into an hourglass; on success it briefly shows ✓ with a sound. On failure an alert explains what happened and **your original text is never modified**. Capturing/pasting temporarily borrows the clipboard; your previous clipboard content (including images and other non-text data) is restored automatically afterwards.
+While processing, a "Polishing…" toast appears next to the cursor and the menu bar icon turns into an hourglass; on success the toast flashes a green ✓ with a sound. On failure an alert explains what happened and **your original text is never modified**. Capturing/pasting temporarily borrows the clipboard; your previous clipboard content (including images and other non-text data) is restored automatically afterwards.
 
 Notes:
 
@@ -75,8 +77,8 @@ Notes:
 
 Your input is sent to the API endpoint you configure. For sensitive content, point `baseURL` at a local Ollama (`http://localhost:11434/v1`) or an internal company proxy so nothing leaves your network. The API key is stored in plaintext in the config file (migrating to Keychain is planned for v0.2).
 
-## v0.1 scope
+## Current scope
 
-Covered: multi-round refinement, auto-copy on every round, voice input (macOS native recognition), IME-safe Enter handling, request cancellation, original text preserved on failure, truncation warning, hotkey conflict alert, multi-display support (panel appears on the screen with the mouse), works over full-screen Spaces.
+Covered: multi-round refinement with in-place replacement, auto paste-back, polish-in-place (hotkey / right-click Services / menu bar entries), voice input (macOS native recognition, long pauses safe), 中/EN bilingual mode (output language + UI language + separate native prompts), in-app settings window, cursor-side HUD feedback, IME-safe Enter handling, request cancellation, original preserved on failure, full clipboard snapshot restore, truncation warning, hotkey conflict alert, multi-display, works over full-screen Spaces.
 
-Not yet covered (future versions): version switching and rollback, settings UI, Keychain, native Anthropic protocol, streaming output, multiple prompt presets, polish-selected-text mode, launch at login.
+Not yet covered (future versions): version switching and rollback, Keychain, native Anthropic protocol, streaming output, launch at login.
