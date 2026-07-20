@@ -93,12 +93,17 @@ final class QuickPolishController {
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
         HUD.shared.showWorking(mode == .all ? "全选润色中…" : "润色中…")
+
+        // 用户触发快捷键时修饰键（⌃⌥）往往还按着，此时模拟 ⌘A/⌘C 会被
+        // 叠加成 ⌘⌃⌥A 导致目标应用不响应——先等所有修饰键物理松开
+        await waitForModifierRelease()
+
         let snapshot = ClipboardSnapshot.capture()
         let pasteboard = NSPasteboard.general
 
         if mode == .all {
             KeySimulator.postCommandKey(KeySimulator.keyA)
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
         }
 
         // 模拟 ⌘C 并轮询等待剪贴板变化（最多 1.5s）
@@ -136,6 +141,18 @@ final class QuickPolishController {
         } catch {
             snapshot.restore()
             finishWithError(error.localizedDescription)
+        }
+    }
+
+    /// 等待用户松开全部修饰键（最多 1.5s）
+    private func waitForModifierRelease() async {
+        let modifierMask: CGEventFlags = [
+            .maskCommand, .maskControl, .maskAlternate, .maskShift,
+        ]
+        for _ in 0..<30 {
+            let flags = CGEventSource.flagsState(.combinedSessionState)
+            if flags.intersection(modifierMask).isEmpty { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
     }
 
