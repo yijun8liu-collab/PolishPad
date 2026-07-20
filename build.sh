@@ -26,6 +26,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <string>0.1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
@@ -76,6 +78,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 EOF
 
 cp .build/release/PolishPad "$APP/Contents/MacOS/PolishPad"
+mkdir -p "$APP/Contents/Resources"
+cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # 优先使用固定的自签名证书（TCC 授权可跨版本存活），否则退回 ad-hoc
 SIGN_IDENTITY="PolishPad Dev"
