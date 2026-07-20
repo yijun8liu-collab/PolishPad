@@ -114,10 +114,32 @@ final class SessionModel: ObservableObject {
 
     // MARK: - Preset
 
-    /// 手动切换场景（清除自动选择提示）
+    /// 手动切换场景（清除自动选择提示）。
+    /// 审阅态下切换 = 把当前文本按新场景重新生成一版——否则新场景
+    /// 对已有文本毫无作用（追加/修改轮次都以旧文本为锚）
     func selectPreset(_ preset: PromptPreset) {
+        let previous = activePreset
         activePreset = preset
         autoPresetNote = nil
+        guard preset != previous, phase == .reviewing,
+              !currentResult.isEmpty, !isLoading else { return }
+        reRenderCurrentResult()
+    }
+
+    /// 用当前场景把当前文本重新生成（开启全新对话链，保留版本历史可回退）
+    private func reRenderCurrentResult() {
+        let config: AppConfig
+        do {
+            config = try ConfigStore.load()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let requestMessages = [
+            ChatMessage(role: "system", content: systemContent(config)),
+            ChatMessage(role: "user", content: "<input>\n\(currentResult)\n</input>"),
+        ]
+        run(requestMessages: requestMessages, config: config)
     }
 
     /// 应用感知：唤起时按前台应用自动选场景
