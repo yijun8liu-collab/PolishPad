@@ -58,6 +58,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in self?.reloadHotKeysAndMenu() }
         }
+        // 快捷键录制期间暂停全局热键，避免按到现有组合时触发功能
+        NotificationCenter.default.addObserver(
+            forName: .polishPadSuspendHotkeys, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.hotKeys.forEach { $0.unregister() }
+                self.hotKeys.removeAll()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .polishPadResumeHotkeys, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.hotKeys.isEmpty else { return }
+                self.setupHotKeys()
+            }
+        }
     }
 
     private func reloadHotKeysAndMenu() {

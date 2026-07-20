@@ -33,6 +33,11 @@ final class GlobalHotKey {
         return (keyCode, modifiers)
     }
 
+    /// 键码反查名称（快捷键录制用）
+    static func keyName(forCode code: UInt32) -> String? {
+        keyCodes.first { $0.value == code }?.key
+    }
+
     private static let keyCodes: [String: UInt32] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
         "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,

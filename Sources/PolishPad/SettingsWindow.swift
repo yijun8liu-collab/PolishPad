@@ -52,11 +52,14 @@ struct SettingsView: View {
                 }
 
                 Section(UILang.t("快捷键（保存后立即生效）", "Hotkeys (apply on save)")) {
-                    TextField(UILang.t("润色窗口", "Polish panel"), text: $hotkeyPanel)
-                    TextField(UILang.t("划词润色替换", "Polish selection"), text: $hotkeySelection)
-                    TextField(UILang.t("全选润色替换", "Select-all polish"), text: $hotkeyAll)
-                    Text(UILang.t("格式：cmd / option / ctrl / shift + 字母/数字/space，如 ctrl+option+r",
-                                  "Format: cmd / option / ctrl / shift + letter/digit/space, e.g. ctrl+option+r"))
+                    HotkeyRecorderField(
+                        label: UILang.t("润色窗口", "Polish panel"), spec: $hotkeyPanel)
+                    HotkeyRecorderField(
+                        label: UILang.t("划词润色替换", "Polish selection"), spec: $hotkeySelection)
+                    HotkeyRecorderField(
+                        label: UILang.t("全选润色替换", "Select-all polish"), spec: $hotkeyAll)
+                    Text(UILang.t("点击后直接按下新的组合键（至少含一个修饰键）",
+                                  "Click, then press the new combination (needs at least one modifier)"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
