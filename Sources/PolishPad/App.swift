@@ -16,12 +16,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
+        setupMainMenu()
         panelController = PanelController()
         setupQuickPolish()
         setupHotKeys()
         setupStatusItem()
         setupServices()
         setupNotifications()
+    }
+
+    /// 菜单栏应用默认没有主菜单，而 ⌘V/⌘C/⌘X/⌘A/⌘Z 依赖编辑菜单的
+    /// 键盘等价键派发——挂一个不可见的标准编辑菜单让它们在面板内生效
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All",
+            action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"
+        )
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
     }
 
     private func setupNotifications() {
