@@ -9,7 +9,7 @@ final class KeyablePanel: NSPanel {
 @MainActor
 final class PanelController {
     private let panel: KeyablePanel
-    private let model = SessionModel()
+    let model = SessionModel()
     /// 唤起前的前台应用，关窗后把焦点还回去
     private var previousApp: NSRunningApplication?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
@@ -58,6 +58,11 @@ final class PanelController {
         model.resetSession()
         lastPastedText = nil
         previousApp = NSWorkspace.shared.frontmostApplication
+        // 应用感知：按唤起前的前台应用自动选场景
+        model.applyAutoPreset(
+            bundleID: previousApp?.bundleIdentifier,
+            appName: previousApp?.localizedName
+        )
 
         // 出现在鼠标所在屏幕，类 Spotlight 位置（水平居中，偏上）
         panel.layoutIfNeeded()
@@ -114,9 +119,12 @@ final class PanelController {
             }
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
+                let replacedOld = replacePrevious ? self.lastPastedText : nil
                 await self.deletePreviousPasteIfNeeded(replacePrevious)
                 KeySimulator.postCommandKey(KeySimulator.keyV)
                 self.lastPastedText = NSPasteboard.general.string(forType: .string)
+                ReplacementUndo.shared.record(
+                    pasted: self.lastPastedText, replaced: replacedOld, app: app)
                 HUD.shared.flashSuccess(replacePrevious
                     ? UILang.t("已替换", "Replaced")
                     : UILang.t("已粘贴", "Pasted"))
@@ -179,9 +187,12 @@ final class PanelController {
             }
             // 再留一点时间让焦点落回输入框
             try? await Task.sleep(nanoseconds: 200_000_000)
+            let replacedOld = replacePrevious ? self.lastPastedText : nil
             await self.deletePreviousPasteIfNeeded(replacePrevious)
             KeySimulator.postCommandKey(KeySimulator.keyV)
             self.lastPastedText = NSPasteboard.general.string(forType: .string)
+            ReplacementUndo.shared.record(
+                pasted: self.lastPastedText, replaced: replacedOld, app: app)
             HUD.shared.flashSuccess(replacePrevious
                 ? UILang.t("已替换", "Replaced")
                 : UILang.t("已粘贴", "Pasted"))

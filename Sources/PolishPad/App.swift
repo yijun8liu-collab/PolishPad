@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var historyMenuItem: NSMenuItem?
     private var panelController: PanelController!
     private var quickPolish: QuickPolishController!
     private var serviceProvider: ServiceProvider!
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
+        ConfigStore.migrateKeyToKeychainIfNeeded()
         setupMainMenu()
         panelController = PanelController()
         setupQuickPolish()
@@ -169,6 +171,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(allItem)
 
         menu.addItem(.separator())
+        let restoreItem = NSMenuItem(
+            title: "还原上次替换", action: #selector(restoreLastReplacement), keyEquivalent: ""
+        )
+        restoreItem.target = self
+        menu.addItem(restoreItem)
+
+        let historyItem = NSMenuItem(title: "历史", action: nil, keyEquivalent: "")
+        historyItem.submenu = buildHistoryMenu()
+        menu.addItem(historyItem)
+        self.historyMenuItem = historyItem
+
+        menu.addItem(.separator())
         let settingsItem = NSMenuItem(
             title: "设置…", action: #selector(openSettings), keyEquivalent: ""
         )
@@ -186,7 +200,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "退出 PolishPad",
             action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
         ))
+        menu.delegate = self
         return menu
+    }
+
+    /// 历史子菜单：每条会话展开各版本，点击复制
+    private func buildHistoryMenu() -> NSMenu {
+        let menu = NSMenu()
+        let records = HistoryStore.shared.records
+        if records.isEmpty {
+            let empty = NSMenuItem(title: "暂无记录", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return menu
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        for record in records {
+            let preview = record.original
+                .replacingOccurrences(of: "\n", with: " ")
+                .prefix(18)
+            let entry = NSMenuItem(
+                title: "\(formatter.string(from: record.date)) · \(preview)…（v\(record.versions.count)）",
+                action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for (index, text) in record.versions.enumerated().reversed() {
+                let item = NSMenuItem(
+                    title: index == record.versions.count - 1
+                        ? "复制 v\(index + 1)（最新）" : "复制 v\(index + 1)",
+                    action: #selector(copyHistoryText(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = text
+                sub.addItem(item)
+            }
+            sub.addItem(.separator())
+            let originalItem = NSMenuItem(
+                title: "复制原文", action: #selector(copyHistoryText(_:)), keyEquivalent: "")
+            originalItem.target = self
+            originalItem.representedObject = record.original
+            sub.addItem(originalItem)
+            entry.submenu = sub
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    @objc private func copyHistoryText(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        HUD.shared.flashSuccess(UILang.t("已复制", "Copied"))
+    }
+
+    @objc private func restoreLastReplacement() {
+        Task { @MainActor in
+            let restored = await ReplacementUndo.shared.restore()
+            if !restored {
+                HUD.shared.flashSuccess(UILang.t("没有可还原的替换", "Nothing to restore"))
+            }
+        }
     }
 
     @objc private func openSettings() {
@@ -205,6 +278,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             systemSymbolName: symbolName,
             accessibilityDescription: "PolishPad"
         )
+    }
+
+    /// 每次打开菜单时刷新历史子菜单
+    nonisolated func menuWillOpen(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            guard menu === statusItem.menu else { return }
+            historyMenuItem?.submenu = buildHistoryMenu()
+        }
     }
 
     @objc private func togglePanel() {
@@ -241,6 +322,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct PolishPadMain {
     @MainActor
     static func main() {
+        if CommandLine.arguments.contains("--selftest") {
+            exit(Int32(SelfTest.run()))
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

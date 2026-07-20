@@ -24,12 +24,22 @@ final class SessionModel: ObservableObject {
     /// 变化时对应编辑框抢焦点（0 表示不抢）
     @Published var focusToken = 0
     @Published var isRecording = false
+    /// 本会话使用的场景预设（底栏可随手切换）
+    @Published var activePreset: PromptPreset = .polish
+    /// 应用感知自动选择的提示（手动切换后清除）
+    @Published var autoPresetNote: String?
+    /// 当前显示第几版（1-based）
+    @Published var shownVersion = 0
+    /// 改动对比视图开关
+    @Published var showDiff = false
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet { UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish") }
     }
 
-    private(set) var version = 0
+    /// 会话内全部版本
+    private(set) var versions: [String] = []
+    var version: Int { versions.count }
     /// 已提交成功的完整对话（system + input + 每轮 feedback/assistant）
     private var messages: [ChatMessage] = []
     private var task: Task<Void, Never>?
@@ -37,13 +47,14 @@ final class SessionModel: ObservableObject {
     private let speech = SpeechRecorder()
     /// 听写开始时输入框里已有的文字，识别结果追加在其后
     private var dictationBase = ""
+    private var sessionID = UUID()
 
     var onRequestClose: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
-    /// 优化成功即自动贴回；replacePrevious 为 true 时先 ⌘Z 撤销上次粘贴
+    /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
     var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
-    /// 本会话是否已经自动粘贴过（决定下次是否先撤销）
+    /// 本会话是否已经自动粘贴过（决定下次是否先删除）
     private var hasAutoPasted = false
 
     init() {
@@ -101,6 +112,25 @@ final class SessionModel: ObservableObject {
         onRequestClose?()
     }
 
+    // MARK: - Preset
+
+    /// 手动切换场景（清除自动选择提示）
+    func selectPreset(_ preset: PromptPreset) {
+        activePreset = preset
+        autoPresetNote = nil
+    }
+
+    /// 应用感知：唤起时按前台应用自动选场景
+    func applyAutoPreset(bundleID: String?, appName: String?) {
+        guard let bundleID,
+              let mapping = ConfigStore.loadRaw()?.appPresets,
+              let raw = mapping[bundleID],
+              let preset = PromptPreset(rawValue: raw) else { return }
+        activePreset = preset
+        let name = appName ?? bundleID
+        autoPresetNote = t("已按 \(name) 自动选择", "Auto-selected for \(name)")
+    }
+
     // MARK: - Actions
 
     func submitDraft() {
@@ -126,7 +156,7 @@ final class SessionModel: ObservableObject {
     }
 
     private func systemContent(_ config: AppConfig) -> String {
-        config.resolvedSystemPrompt(english: outputEnglish)
+        config.resolvedSystemPrompt(english: outputEnglish, presetOverride: activePreset)
     }
 
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
@@ -148,14 +178,25 @@ final class SessionModel: ObservableObject {
     }
 
     func submitFeedback() {
-        guard !isLoading, phase == .reviewing else { return }
-        stopDictation()
         let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
         // 空反馈按 Enter = 对结果满意，直接贴回原应用
         guard !note.isEmpty else {
+            guard !isLoading, phase == .reviewing else { return }
             requestCloseAndPaste()
             return
         }
+        let tag = feedbackMode == .append ? "append" : "feedback"
+        sendFeedback(note: note, tag: tag)
+    }
+
+    /// 快捷反馈 chips：固定按「修改」语义发送
+    func sendQuickFeedback(_ note: String) {
+        sendFeedback(note: note, tag: "feedback")
+    }
+
+    private func sendFeedback(note: String, tag: String) {
+        guard !isLoading, phase == .reviewing else { return }
+        stopDictation()
         let config: AppConfig
         do {
             config = try ConfigStore.load()
@@ -164,13 +205,16 @@ final class SessionModel: ObservableObject {
             return
         }
         // 失败时不污染已有会话：本轮消息成功后才提交进 messages
-        // 系统消息按当前语言开关重建，中途切换 中/EN 也能即时生效
+        // 系统消息按当前语言/场景重建，中途切换也即时生效
         var base = messages
         if let first = base.first, first.role == "system" {
             base[0] = ChatMessage(role: "system", content: systemContent(config))
         }
-        // 追加 = 新内容并入全文；修改 = 对当前版本的修改意见
-        let tag = feedbackMode == .append ? "append" : "feedback"
+        // 用户回退到旧版本后发反馈：以当前显示的版本为基准
+        if let lastIndex = base.indices.last, base[lastIndex].role == "assistant",
+           base[lastIndex].content != currentResult {
+            base[lastIndex] = ChatMessage(role: "assistant", content: currentResult)
+        }
         let requestMessages = base + [
             ChatMessage(role: "user", content: "<\(tag)>\n\(note)\n</\(tag)>")
         ]
@@ -180,6 +224,7 @@ final class SessionModel: ObservableObject {
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
         errorMessage = nil
+        showDiff = false
         statusText = t("优化中…（Esc 取消）", "Refining… (Esc to cancel)")
         // 流式期间结果区实时刷新；取消/失败时恢复本轮开始前的版本
         let resultBeforeRound = currentResult
@@ -217,7 +262,8 @@ final class SessionModel: ObservableObject {
 
     private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
         let previousLength = previousResultLength
-        version += 1
+        versions.append(output)
+        shownVersion = versions.count
         messages = requestMessages + [ChatMessage(role: "assistant", content: output)]
         currentResult = output
 
@@ -234,8 +280,14 @@ final class SessionModel: ObservableObject {
         isLoading = false
         phase = .reviewing
 
+        // 每轮成功即写入历史（应用退出也不丢）
+        HistoryStore.shared.upsert(
+            id: sessionID, original: draft, versions: versions,
+            preset: activePreset.rawValue
+        )
+
         if ConfigStore.loadRaw()?.autoPaste ?? true {
-            // 极速模式：出结果直接贴回原应用；纠偏轮次先撤销上一版再贴
+            // 极速模式：出结果直接贴回原应用；纠偏轮次先删除上一版再贴
             let replacePrevious = hasAutoPasted
             hasAutoPasted = true
             onAutoPaste?(replacePrevious)
@@ -259,6 +311,27 @@ final class SessionModel: ObservableObject {
         statusText = version > 0
             ? t("已取消，剪贴板仍是 v\(version)", "Cancelled — clipboard still has v\(version)")
             : t("已取消", "Cancelled")
+    }
+
+    // MARK: - Version switching（⌘[ / ⌘]）
+
+    func switchVersion(_ delta: Int) {
+        guard !isLoading, versions.count > 1 else { return }
+        let target = shownVersion + delta
+        guard target >= 1, target <= versions.count else { return }
+        shownVersion = target
+        currentResult = versions[target - 1]
+        showDiff = false
+        copyToClipboard(currentResult)
+        statusText = t("✅ v\(target)/\(versions.count) 已复制到剪贴板",
+                       "✅ v\(target)/\(versions.count) copied to clipboard")
+    }
+
+    // MARK: - Diff
+
+    /// 对比基准：v1 对比原始输入，vN 对比 v(N-1)
+    var diffBaseText: String {
+        shownVersion >= 2 ? versions[shownVersion - 2] : draft
     }
 
     /// Esc：听写中先停止听写；请求中先取消请求；否则关窗
@@ -289,9 +362,15 @@ final class SessionModel: ObservableObject {
         currentResult = ""
         statusText = ""
         errorMessage = nil
-        version = 0
+        versions = []
+        shownVersion = 0
+        showDiff = false
         messages = []
         hasAutoPasted = false
+        sessionID = UUID()
+        autoPresetNote = nil
+        activePreset = PromptPreset(
+            rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
         bumpFocus()
     }
 
@@ -304,7 +383,7 @@ final class SessionModel: ObservableObject {
     func copyResultAgain() {
         guard !currentResult.isEmpty else { return }
         copyToClipboard(currentResult)
-        statusText = t("✅ v\(version) 已复制到剪贴板", "✅ v\(version) copied to clipboard")
+        statusText = t("✅ v\(shownVersion) 已复制到剪贴板", "✅ v\(shownVersion) copied to clipboard")
     }
 
     private func copyToClipboard(_ text: String) {

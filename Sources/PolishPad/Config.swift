@@ -67,6 +67,10 @@ struct AppConfig: Codable {
     var speechLocale: String?
     /// 审阅态下空反馈按 Enter 时，是否自动切回原应用并粘贴，默认 true
     var autoPaste: Bool?
+    /// 应用感知：Bundle ID → 场景预设（唤起时按前台应用自动选择）
+    var appPresets: [String: String]?
+    /// 个人术语表：每行 "术语=固定译法" 或 "术语"（原样保留）
+    var glossary: [String]?
 
     static let defaultSystemPrompt = """
     你是一个文本重写工具。用户会给你一段口语化、逻辑松散的文字（通常是想发给 AI 助手的指令）。
@@ -187,8 +191,36 @@ struct AppConfig: Codable {
     \(sharedRulesEN)
     """
 
-    func resolvedSystemPrompt(english: Bool) -> String {
-        let preset = PromptPreset(rawValue: promptPreset ?? "polish") ?? .polish
+    /// 术语表注入块（附加在任何预设提示词之后，最高优先级）
+    func glossaryBlock(english: Bool) -> String {
+        let entries = (glossary ?? [])
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !entries.isEmpty else { return "" }
+        let lines = entries.map { line -> String in
+            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2 {
+                return "- \(parts[0].trimmingCharacters(in: .whitespaces)) → \(parts[1].trimmingCharacters(in: .whitespaces))"
+            }
+            return english ? "- \(line) (keep as-is)" : "- \(line)（原样保留）"
+        }.joined(separator: "\n")
+        if english {
+            return "\n\nGlossary (highest priority). Handle these terms exactly as specified — "
+                + "use the given translation when provided, otherwise keep the term verbatim, "
+                + "never rewrite them:\n" + lines
+        }
+        return "\n\n术语表（最高优先级）：以下术语按给定方式处理——有译法的使用固定译法，"
+            + "未给译法的原样保留，绝不改写：\n" + lines
+    }
+
+    func resolvedSystemPrompt(english: Bool, presetOverride: PromptPreset? = nil) -> String {
+        basePrompt(english: english, presetOverride: presetOverride)
+            + glossaryBlock(english: english)
+    }
+
+    private func basePrompt(english: Bool, presetOverride: PromptPreset?) -> String {
+        let preset = presetOverride
+            ?? PromptPreset(rawValue: promptPreset ?? "polish") ?? .polish
         switch preset {
         case .polish:
             return english ? Self.defaultSystemPromptEnglish : Self.defaultSystemPrompt
@@ -226,6 +258,28 @@ enum ConfigStore {
     }
 
     static let placeholderKey = "在这里填入你的 API Key"
+    /// JSON 中的哨兵值：真实 key 存于 Keychain
+    static let keychainSentinel = "(stored-in-keychain)"
+
+    /// 启动时把 JSON 里的明文 key 迁移进 Keychain，JSON 只留哨兵
+    static func migrateKeyToKeychainIfNeeded() {
+        guard var config = loadRaw() else { return }
+        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, key != placeholderKey, key != keychainSentinel else { return }
+        KeychainStore.set(key)
+        config.apiKey = keychainSentinel
+        writeRaw(config)
+    }
+
+    static func writeRaw(_ config: AppConfig) {
+        try? FileManager.default.createDirectory(
+            at: configDirectory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        if let data = try? encoder.encode(config) {
+            try? data.write(to: configURL)
+        }
+    }
 
     /// 首次运行时写入模板配置
     static func ensureConfigFileExists() {
@@ -244,7 +298,12 @@ enum ConfigStore {
             hotkeyPolishAll: "ctrl+option+a",
             systemPrompt: nil,
             speechLocale: "zh-CN",
-            autoPaste: true
+            autoPaste: true,
+            appPresets: [
+                "com.tinyspeck.slackmacgap": "slack-english",
+                "com.apple.mail": "formal",
+            ],
+            glossary: []
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
@@ -276,20 +335,24 @@ enum ConfigStore {
         return try? JSONDecoder().decode(AppConfig.self, from: data)
     }
 
-    /// 每次请求时重新读取，改配置不用重启
+    /// 每次请求时重新读取，改配置不用重启。
+    /// key 优先级：JSON 里的真实值（手改场景，下次启动自动迁移）> Keychain
     static func load() throws -> AppConfig {
         guard let data = try? Data(contentsOf: configURL) else {
             throw ConfigError.missing
         }
-        let config: AppConfig
+        var config: AppConfig
         do {
             config = try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
             throw ConfigError.invalid(error.localizedDescription)
         }
         let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if key.isEmpty || key == placeholderKey {
-            throw ConfigError.notConfigured
+        if key.isEmpty || key == placeholderKey || key == keychainSentinel {
+            guard let stored = KeychainStore.get(), !stored.isEmpty else {
+                throw ConfigError.notConfigured
+            }
+            config.apiKey = stored
         }
         return config
     }

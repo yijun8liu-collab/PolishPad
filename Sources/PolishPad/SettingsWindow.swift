@@ -6,6 +6,13 @@ extension Notification.Name {
     static let polishPadSettingsSaved = Notification.Name("PolishPad.settingsSaved")
 }
 
+/// 应用感知映射的可编辑行
+struct AppMappingRow: Identifiable {
+    let id = UUID()
+    var bundleID: String
+    var preset: String
+}
+
 /// 设置窗口：把 config.json 的所有可配置项整合成表单
 struct SettingsView: View {
     @State private var baseURL = ""
@@ -24,6 +31,8 @@ struct SettingsView: View {
     @State private var statusIsError = false
     @State private var testing = false
     @State private var promptPreset = "polish"
+    @State private var appRows: [AppMappingRow] = []
+    @State private var glossaryText = ""
     @State private var updateStatus = ""
     @State private var updateURL: String?
     @State private var checkingUpdate = false
@@ -108,6 +117,51 @@ struct SettingsView: View {
                     }
                 }
 
+                Section(UILang.t("应用感知（唤起面板时按前台应用自动选场景）",
+                                 "App-aware presets (auto-select on summon)")) {
+                    ForEach($appRows) { $row in
+                        HStack(spacing: 8) {
+                            TextField("Bundle ID", text: $row.bundleID,
+                                      prompt: Text("com.tinyspeck.slackmacgap"))
+                                .font(.system(size: 12))
+                            Picker("", selection: $row.preset) {
+                                ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                                    Text(UILang.t(preset.labelZH, preset.labelEN))
+                                        .tag(preset.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 140)
+                            Button {
+                                appRows.removeAll { $0.id == row.id }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                    Button(UILang.t("添加映射", "Add Mapping")) {
+                        appRows.append(AppMappingRow(bundleID: "", preset: "polish"))
+                    }
+                    .controlSize(.small)
+                    Text(UILang.t("查看应用 Bundle ID：终端执行 osascript -e 'id of app \"Slack\"'",
+                                  "Find an app's bundle ID: osascript -e 'id of app \"Slack\"'"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Section(UILang.t("术语表（每行一条：术语=固定译法，或仅术语=原样保留）",
+                                 "Glossary (one per line: term=translation, or term alone to keep verbatim)")) {
+                    TextEditor(text: $glossaryText)
+                        .font(.system(size: 12))
+                        .frame(height: 70)
+                    Text(UILang.t("示例：小流量=canary（换行分隔）；应用于所有场景，优先级最高",
+                                  "Example: 小流量=canary (one per line); applies to every preset with top priority"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
                 Section(UILang.t("更新", "Updates")) {
                     HStack {
                         Text(UILang.t("当前版本", "Current version") + "  v\(appVersion)")
@@ -134,6 +188,13 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    // 本月用量
+                    let usage = UsageStore.currentMonth()
+                    Text(UILang.t(
+                        "本月用量：\(usage.requests) 次请求 · 输入 \(usage.prompt) / 输出 \(usage.completion) tokens",
+                        "This month: \(usage.requests) requests · \(usage.prompt) in / \(usage.completion) out tokens"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -170,7 +231,14 @@ struct SettingsView: View {
     private func load() {
         guard let config = ConfigStore.loadRaw() else { return }
         baseURL = config.baseURL
-        apiKey = config.apiKey == ConfigStore.placeholderKey ? "" : config.apiKey
+        let rawKey = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawKey == ConfigStore.placeholderKey || rawKey.isEmpty {
+            apiKey = ""
+        } else if rawKey == ConfigStore.keychainSentinel {
+            apiKey = KeychainStore.get() ?? ""
+        } else {
+            apiKey = rawKey
+        }
         modelName = config.model
         temperature = config.temperature ?? 0.3
         maxTokensText = String(config.maxTokens ?? 4096)
@@ -185,14 +253,36 @@ struct SettingsView: View {
         if config.promptPreset == nil, !(config.systemPrompt ?? "").isEmpty {
             promptPreset = PromptPreset.custom.rawValue
         }
+        appRows = (config.appPresets ?? [:])
+            .sorted { $0.key < $1.key }
+            .map { AppMappingRow(bundleID: $0.key, preset: $0.value) }
+        glossaryText = (config.glossary ?? []).joined(separator: "\n")
     }
 
-    private func buildConfig() -> AppConfig {
+    /// includeRealKey：true 用于运行时测试；false 用于写盘（key 进 Keychain，JSON 留哨兵）
+    private func buildConfig(includeRealKey: Bool) -> AppConfig {
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let jsonKey: String
+        if key.isEmpty {
+            jsonKey = ConfigStore.placeholderKey
+        } else {
+            jsonKey = includeRealKey ? key : ConfigStore.keychainSentinel
+        }
+        var mappings: [String: String] = [:]
+        for row in appRows {
+            let bundleID = row.bundleID.trimmingCharacters(in: .whitespaces)
+            if !bundleID.isEmpty {
+                mappings[bundleID] = row.preset
+            }
+        }
+        let glossaryLines = glossaryText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         return AppConfig(
             baseURL: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-            apiKey: key.isEmpty ? ConfigStore.placeholderKey : key,
+            apiKey: jsonKey,
             model: modelName.trimmingCharacters(in: .whitespacesAndNewlines),
             temperature: temperature,
             maxTokens: Int(maxTokensText.trimmingCharacters(in: .whitespaces)) ?? 4096,
@@ -202,7 +292,9 @@ struct SettingsView: View {
             hotkeyPolishAll: hotkeyAll.trimmingCharacters(in: .whitespaces),
             systemPrompt: prompt.isEmpty ? nil : prompt,
             speechLocale: speechLocale.trimmingCharacters(in: .whitespaces),
-            autoPaste: autoPaste
+            autoPaste: autoPaste,
+            appPresets: mappings.isEmpty ? nil : mappings,
+            glossary: glossaryLines.isEmpty ? nil : glossaryLines
         )
     }
 
@@ -217,13 +309,19 @@ struct SettingsView: View {
             }
         }
         do {
+            // key 存 Keychain，JSON 只留哨兵
+            let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                KeychainStore.set(key)
+            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-            let data = try encoder.encode(buildConfig())
+            let data = try encoder.encode(buildConfig(includeRealKey: false))
             try FileManager.default.createDirectory(
                 at: ConfigStore.configDirectory, withIntermediateDirectories: true)
             try data.write(to: ConfigStore.configURL)
-            statusMessage = UILang.t("✅ 已保存，快捷键已重新注册", "✅ Saved — hotkeys re-registered")
+            statusMessage = UILang.t("✅ 已保存（API Key 已存入钥匙串）",
+                                     "✅ Saved (API key stored in Keychain)")
             statusIsError = false
             NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
         } catch {
@@ -277,7 +375,7 @@ struct SettingsView: View {
     private func testConnection() {
         testing = true
         statusMessage = ""
-        var config = buildConfig()
+        var config = buildConfig(includeRealKey: true)
         config.maxTokens = 16
         let messages = [ChatMessage(role: "user", content: "Reply with the single word: OK")]
         Task {

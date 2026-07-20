@@ -72,38 +72,31 @@ struct SessionView: View {
         }
     }
 
-    // MARK: - 审阅态：状态行 + 结果 + 纠偏行
+    // MARK: - 审阅态：状态行 + 结果/diff + chips + 纠偏行
 
     private var reviewArea: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("v\(model.version)")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color.primary.opacity(0.07)))
-                Text(model.statusText)
-                    .font(.caption)
-                    .foregroundColor(Color.secondary.opacity(0.85))
-                Spacer()
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
-            .padding(.bottom, 4)
+            statusRow
 
-            SubmitTextEditor(
-                text: $model.currentResult,
-                isEditable: false,
-                fontSize: 14.5,
-                inset: NSSize(width: 16, height: 8),
-                onCancel: { model.handleEscape() }
-            )
-            .frame(height: 270)
+            if model.showDiff {
+                diffView
+                    .frame(height: 270)
+            } else {
+                SubmitTextEditor(
+                    text: $model.currentResult,
+                    isEditable: false,
+                    fontSize: 14.5,
+                    inset: NSSize(width: 16, height: 8),
+                    onCancel: { model.handleEscape() }
+                )
+                .frame(height: 270)
+            }
 
             Divider()
                 .opacity(0.4)
                 .padding(.horizontal, 16)
+
+            quickChipsRow
 
             HStack(spacing: 0) {
                 feedbackModeToggle
@@ -135,9 +128,135 @@ struct SessionView: View {
         }
     }
 
+    private var statusRow: some View {
+        HStack(spacing: 6) {
+            // 版本切换（⌘[ / ⌘] 同效）
+            if model.versions.count > 1 {
+                Button {
+                    model.switchVersion(-1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.shownVersion <= 1 || model.isLoading)
+                .foregroundColor(Color.secondary.opacity(model.shownVersion <= 1 ? 0.3 : 0.9))
+            }
+            Text(model.versions.count > 1
+                 ? "v\(model.shownVersion)/\(model.versions.count)"
+                 : "v\(model.shownVersion)")
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
+            if model.versions.count > 1 {
+                Button {
+                    model.switchVersion(1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.shownVersion >= model.versions.count || model.isLoading)
+                .foregroundColor(Color.secondary.opacity(
+                    model.shownVersion >= model.versions.count ? 0.3 : 0.9))
+            }
+
+            Text(model.statusText)
+                .font(.caption)
+                .foregroundColor(Color.secondary.opacity(0.85))
+                .lineLimit(1)
+
+            Spacer()
+
+            // 改动对比开关
+            if model.version >= 1, !model.isLoading {
+                Button {
+                    model.showDiff.toggle()
+                } label: {
+                    Text(model.t("改动", "Diff"))
+                        .font(.system(size: 10, weight: model.showDiff ? .semibold : .regular))
+                        .foregroundColor(model.showDiff ? .primary : Color.secondary.opacity(0.8))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(
+                            model.showDiff ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(model.t("对比当前版本与上一版的改动", "Compare with the previous version"))
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    /// 增删高亮的对比视图（v1 对比原始输入）
+    private var diffView: some View {
+        ScrollView {
+            if let attributed = DiffRenderer.attributedString(
+                from: model.diffBaseText, to: model.currentResult) {
+                Text(attributed)
+                    .font(.system(size: 14))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            } else {
+                Text(model.t("文本过长，已跳过逐字对比", "Text too long for character diff"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(16)
+            }
+        }
+    }
+
+    /// 快捷反馈 chips：一键发送高频纠偏意见
+    private var quickChipsRow: some View {
+        HStack(spacing: 6) {
+            quickChip(model.t("更短", "Shorter"),
+                      note: model.t("把内容压缩得更短、更精炼一些",
+                                    "Make it shorter and tighter"))
+            quickChip(model.t("更正式", "Formal"),
+                      note: model.t("语气改得更正式、更书面一些",
+                                    "Make the tone more formal"))
+            quickChip(model.t("更口语", "Casual"),
+                      note: model.t("语气改得更口语、更自然一些",
+                                    "Make the tone more casual and natural"))
+            quickChip(model.t("展开", "Expand"),
+                      note: model.t("把内容展开得更详细、更具体一些",
+                                    "Expand with more detail"))
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
+    private func quickChip(_ label: String, note: String) -> some View {
+        Button {
+            model.sendQuickFeedback(note)
+        } label: {
+            Text(label)
+                .font(.system(size: 10.5))
+                .foregroundColor(Color.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isLoading)
+        .help(note)
+    }
+
     private var feedbackPlaceholder: String {
         model.feedbackMode == .append
-            ? model.t("补充新内容，优化后并入上文；回车完成…", "Add new content to merge in; Enter to finish…")
+            ? model.t("补充新内容，优化后并入上文；回车完成…",
+                      "Add new content to merge in; Enter to finish…")
             : model.t("说怎么改；回车完成…", "Describe changes; Enter to finish…")
     }
 
@@ -209,6 +328,15 @@ struct SessionView: View {
 
             languageToggle
 
+            presetMenu
+
+            if let note = model.autoPresetNote {
+                Text(note)
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.secondary.opacity(0.65))
+                    .lineLimit(1)
+            }
+
             if model.isLoading {
                 ProgressView()
                     .controlSize(.mini)
@@ -245,7 +373,7 @@ struct SessionView: View {
         }
         return model.phase == .composing
             ? model.t("↩ 优化 · ⇧↩ 换行", "↩ refine · ⇧↩ newline")
-            : model.t("↩ 替换 · ⇥ 追加/修改 · 空↩ 完成", "↩ replace · ⇥ add/edit · empty ↩ done")
+            : model.t("↩ 替换 · ⌘[⌘] 版本 · 空↩ 完成", "↩ replace · ⌘[⌘] versions · empty ↩ done")
     }
 
     private var languageToggle: some View {
@@ -269,8 +397,51 @@ struct SessionView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2.5)
                 .background(Capsule().fill(selected ? Color.primary.opacity(0.12) : Color.clear))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+
+    /// 场景快切：逐条消息级的场景选择
+    private var presetMenu: some View {
+        Menu {
+            ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                Button {
+                    model.selectPreset(preset)
+                } label: {
+                    if preset == model.activePreset {
+                        Label(model.t(preset.labelZH, preset.labelEN), systemImage: "checkmark")
+                    } else {
+                        Text(model.t(preset.labelZH, preset.labelEN))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(presetShortLabel(model.activePreset))
+                    .font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+            }
+            .foregroundColor(.primary.opacity(0.85))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(model.t((model.activePreset).descriptionZH, (model.activePreset).descriptionEN))
+    }
+
+    private func presetShortLabel(_ preset: PromptPreset) -> String {
+        switch preset {
+        case .polish: return model.t("优化", "Refine")
+        case .slackEnglish: return "Slack"
+        case .formal: return model.t("正式", "Formal")
+        case .concise: return model.t("精简", "Brief")
+        case .custom: return model.t("自定", "Custom")
+        }
     }
 
     private var overflowMenu: some View {
@@ -295,13 +466,19 @@ struct SessionView: View {
         .frame(width: 24)
     }
 
-    /// 不可见但保持快捷键可用
+    /// 不可见但保持快捷键可用（⌘N 重开、⌘[/⌘] 版本切换）
     private var hiddenShortcuts: some View {
-        Button("") { model.resetSession() }
-            .keyboardShortcut("n", modifiers: .command)
-            .buttonStyle(.plain)
-            .frame(width: 0, height: 0)
-            .opacity(0)
+        Group {
+            Button("") { model.resetSession() }
+                .keyboardShortcut("n", modifiers: .command)
+            Button("") { model.switchVersion(-1) }
+                .keyboardShortcut("[", modifiers: .command)
+            Button("") { model.switchVersion(1) }
+                .keyboardShortcut("]", modifiers: .command)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0)
     }
 }
 

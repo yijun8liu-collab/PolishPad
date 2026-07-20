@@ -32,11 +32,20 @@ enum LLMError: LocalizedError {
 
 enum LLMClient {
     private struct RequestBody: Encodable {
+        struct StreamOptions: Encodable {
+            let include_usage: Bool
+        }
         let model: String
         let messages: [ChatMessage]
         let temperature: Double
         let max_tokens: Int
         var stream: Bool = false
+        var stream_options: StreamOptions?
+    }
+
+    struct Usage: Decodable {
+        let prompt_tokens: Int?
+        let completion_tokens: Int?
     }
 
     private struct StreamChunk: Decodable {
@@ -45,6 +54,7 @@ enum LLMClient {
             let delta: Delta
         }
         let choices: [Choice]?
+        let usage: Usage?
     }
 
     private struct ResponseBody: Decodable {
@@ -55,6 +65,7 @@ enum LLMClient {
         struct APIError: Decodable { let message: String? }
         let choices: [Choice]?
         let error: APIError?
+        let usage: Usage?
     }
 
     /// 划词/全选替换用的单发优化（无多轮上下文），跟随面板的 中/EN 开关
@@ -106,9 +117,18 @@ enum LLMClient {
                 let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 if payload == "[DONE]" { break }
                 guard let data = payload.data(using: .utf8),
-                      let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data),
-                      let delta = chunk.choices?.first?.delta.content,
-                      !delta.isEmpty else { continue }
+                      let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data) else {
+                    continue
+                }
+                // 末尾 chunk 携带用量统计
+                if let usage = chunk.usage {
+                    UsageStore.record(
+                        promptTokens: usage.prompt_tokens ?? 0,
+                        completionTokens: usage.completion_tokens ?? 0)
+                }
+                guard let delta = chunk.choices?.first?.delta.content, !delta.isEmpty else {
+                    continue
+                }
                 full += delta
                 onPartial?(full)
             }
@@ -139,7 +159,8 @@ enum LLMClient {
             messages: messages,
             temperature: config.temperature ?? 0.3,
             max_tokens: config.maxTokens ?? 4096,
-            stream: stream
+            stream: stream,
+            stream_options: stream ? .init(include_usage: true) : nil
         ))
         return request
     }
@@ -183,6 +204,11 @@ enum LLMClient {
         guard let parsed = try? JSONDecoder().decode(ResponseBody.self, from: data),
               let content = parsed.choices?.first?.message.content else {
             throw LLMError.http(0, "响应解析失败：\(body.prefix(200))")
+        }
+        if let usage = parsed.usage {
+            UsageStore.record(
+                promptTokens: usage.prompt_tokens ?? 0,
+                completionTokens: usage.completion_tokens ?? 0)
         }
         let cleaned = OutputCleaner.clean(content)
         guard !cleaned.isEmpty else { throw LLMError.emptyResponse }

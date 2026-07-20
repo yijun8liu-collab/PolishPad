@@ -123,6 +123,7 @@ final class QuickPolishController {
 
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
+        let targetApp = NSWorkspace.shared.frontmostApplication
         HUD.shared.showWorking(mode == .all
             ? UILang.t("全选优化中…", "Refining all…")
             : UILang.t("优化中…", "Refining…"))
@@ -173,6 +174,7 @@ final class QuickPolishController {
             pasteboard.clearContents()
             pasteboard.setString(output, forType: .string)
             KeySimulator.postCommandKey(KeySimulator.keyV)
+            ReplacementUndo.shared.record(pasted: output, replaced: input, app: targetApp)
             // 等目标应用完成粘贴后，恢复用户原来的剪贴板
             try? await Task.sleep(nanoseconds: 600_000_000)
             snapshot.restore()
