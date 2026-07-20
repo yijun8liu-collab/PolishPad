@@ -59,9 +59,19 @@ final class GlobalHotKey {
         Self.registry[id] = self
     }
 
+    /// 显式注销。注册表对实例是强引用，等 deinit 自动注销永远不会发生——
+    /// 热重载快捷键前必须先对旧实例调用本方法
+    func unregister() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        handler = nil
+        GlobalHotKey.registry[id] = nil
+    }
+
     deinit {
         if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        GlobalHotKey.registry[id] = nil
     }
 
     private static func installSharedHandlerIfNeeded() {

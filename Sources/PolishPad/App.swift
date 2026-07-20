@@ -39,7 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func reloadHotKeysAndMenu() {
-        hotKeys.removeAll() // deinit 中注销旧的 Carbon 热键
+        hotKeys.forEach { $0.unregister() }
+        hotKeys.removeAll()
         setupHotKeys()
         statusItem.menu = buildMenu()
     }
