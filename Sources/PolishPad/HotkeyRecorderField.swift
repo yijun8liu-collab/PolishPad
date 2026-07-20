@@ -38,6 +38,8 @@ struct HotkeyRecorderField: View {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(isRecording ? Color.accentColor : Color.clear)
                     )
+                    // .plain 按钮默认只有文字字形可点击，把整个胶囊（含内边距和背景）变成热区
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
         }
