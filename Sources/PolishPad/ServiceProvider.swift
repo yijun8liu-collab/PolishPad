@@ -41,6 +41,8 @@ final class ServiceProvider: NSObject {
             return
         }
 
+        Task { @MainActor in HUD.shared.showWorking("润色中…") }
+
         let box = ResultBox()
         Task.detached {
             do {
@@ -60,7 +62,9 @@ final class ServiceProvider: NSObject {
         case .success(let output):
             pboard.clearContents()
             pboard.setString(output, forType: .string)
+            Task { @MainActor in HUD.shared.flashSuccess("已替换") }
         case .failure(let err):
+            Task { @MainActor in HUD.shared.hide() }
             error.pointee = err.localizedDescription as NSString
         }
     }

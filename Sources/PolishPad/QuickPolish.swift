@@ -92,6 +92,7 @@ final class QuickPolishController {
 
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
+        HUD.shared.showWorking(mode == .all ? "全选润色中…" : "润色中…")
         let snapshot = ClipboardSnapshot.capture()
         let pasteboard = NSPasteboard.general
 
@@ -130,6 +131,7 @@ final class QuickPolishController {
             try? await Task.sleep(nanoseconds: 600_000_000)
             snapshot.restore()
             onStateChange?(.success)
+            HUD.shared.flashSuccess("已替换")
             NSSound(named: "Glass")?.play()
         } catch {
             snapshot.restore()
@@ -139,6 +141,7 @@ final class QuickPolishController {
 
     private func finishWithError(_ message: String) {
         onStateChange?(.idle)
+        HUD.shared.hide()
         NSSound(named: "Basso")?.play()
         let alert = NSAlert()
         alert.messageText = "润色替换失败"

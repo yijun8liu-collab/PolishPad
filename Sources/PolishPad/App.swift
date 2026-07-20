@@ -87,17 +87,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openItem.target = self
         menu.addItem(openItem)
 
-        // 划词功能的快捷键提示（点击无效果场景多，仅作说明）
-        let selectionInfo = NSMenuItem(
-            title: "润色选中文本：\(selectionHotkeySpec)", action: nil, keyEquivalent: ""
+        // 点击状态栏菜单不会切走目标应用的焦点，所以这两项可以直接作用于当前应用
+        let selectionItem = NSMenuItem(
+            title: "润色选中文本（\(selectionHotkeySpec)）",
+            action: #selector(polishSelectionFromMenu), keyEquivalent: ""
         )
-        selectionInfo.isEnabled = false
-        menu.addItem(selectionInfo)
-        let allInfo = NSMenuItem(
-            title: "全选润色替换：\(allHotkeySpec)", action: nil, keyEquivalent: ""
+        selectionItem.target = self
+        menu.addItem(selectionItem)
+        let allItem = NSMenuItem(
+            title: "全选润色替换（\(allHotkeySpec)）",
+            action: #selector(polishAllFromMenu), keyEquivalent: ""
         )
-        allInfo.isEnabled = false
-        menu.addItem(allInfo)
+        allItem.target = self
+        menu.addItem(allItem)
 
         menu.addItem(.separator())
         let configItem = NSMenuItem(
@@ -130,6 +132,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() {
         panelController.toggle()
+    }
+
+    /// 等菜单完全收起后再模拟按键，避免事件落到菜单上
+    @objc private func polishSelectionFromMenu() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.quickPolish.trigger(.selection)
+        }
+    }
+
+    @objc private func polishAllFromMenu() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.quickPolish.trigger(.all)
+        }
     }
 
     @objc private func openConfig() {
