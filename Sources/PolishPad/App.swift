@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 @MainActor
@@ -324,6 +325,19 @@ struct PolishPadMain {
     static func main() {
         if CommandLine.arguments.contains("--selftest") {
             exit(Int32(SelfTest.run()))
+        }
+        // 开机自启动的命令行开关（验证/脚本用）
+        if CommandLine.arguments.contains("--login-status") {
+            print("login item status: \(SMAppService.mainApp.status.rawValue) (1=enabled)")
+            exit(0)
+        }
+        if CommandLine.arguments.contains("--login-enable") {
+            do { try SMAppService.mainApp.register(); print("enabled") } catch { print("failed: \(error)") }
+            exit(0)
+        }
+        if CommandLine.arguments.contains("--login-disable") {
+            do { try SMAppService.mainApp.unregister(); print("disabled") } catch { print("failed: \(error)") }
+            exit(0)
         }
         let app = NSApplication.shared
         let delegate = AppDelegate()

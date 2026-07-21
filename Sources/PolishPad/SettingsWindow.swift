@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 extension Notification.Name {
@@ -36,6 +37,7 @@ struct SettingsView: View {
     @State private var updateStatus = ""
     @State private var updateURL: String?
     @State private var checkingUpdate = false
+    @State private var launchAtLogin = false
     @StateObject private var recorder = HotkeyRecorderCoordinator()
 
     private var appVersion: String {
@@ -88,6 +90,10 @@ struct SettingsView: View {
                 Section(UILang.t("行为", "Behavior")) {
                     Toggle(UILang.t("优化后自动粘贴回原应用", "Auto-paste result back into the app"),
                            isOn: $autoPaste)
+                    Toggle(UILang.t("开机自启动", "Launch at login"), isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { enabled in
+                            setLaunchAtLogin(enabled)
+                        }
                     TextField(UILang.t("语音识别语言", "Speech locale"), text: $speechLocale,
                               prompt: Text("zh-CN"))
                 }
@@ -228,7 +234,24 @@ struct SettingsView: View {
         .onAppear(perform: load)
     }
 
+    /// 开机自启动：注册/注销即时生效，状态由系统持有（不进 config.json）
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            statusMessage = UILang.t("开机自启动设置失败：", "Launch-at-login failed: ")
+                + error.localizedDescription
+            statusIsError = true
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+    }
+
     private func load() {
+        launchAtLogin = SMAppService.mainApp.status == .enabled
         guard let config = ConfigStore.loadRaw() else { return }
         baseURL = config.baseURL
         let rawKey = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
