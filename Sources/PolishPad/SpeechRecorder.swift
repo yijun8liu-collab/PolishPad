@@ -55,6 +55,20 @@ final class SpeechRecorder {
     private var segmentStart = Date()
     private var rapidRestarts = 0
 
+    /// 临时诊断日志（定位长停顿丢内容问题）
+    private func slog(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(stamp)] \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/polishpad-speech.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? line.data(using: .utf8)!.write(to: url)
+        }
+    }
+
     func toggle(localeId: String) {
         if isRecording {
             stop()
@@ -138,6 +152,7 @@ final class SpeechRecorder {
         }
         requestBox.set(request)
         segmentStart = Date()
+        slog("SEGMENT-START onDevice=\(recognizer.supportsOnDeviceRecognition) committed=\(committed.count)字")
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
@@ -154,19 +169,27 @@ final class SpeechRecorder {
             rapidRestarts = 0
             let text = result.bestTranscription.formattedString
             if result.isFinal {
-                // 静默后系统敲定本段：提交并无缝开下一段
-                commit(text)
+                // 静默后系统敲定本段：提交并无缝开下一段。
+                // 防御：final 偶尔为空或被截短（静默过久时识别器放弃），
+                // 此时用最后一次临时结果兜底，避免前文蒸发
+                let finalText = (text.isEmpty || text.count * 3 < lastPartial.count)
+                    ? lastPartial : text
+                slog("FINAL text=\(text.count)字 lastPartial=\(lastPartial.count)字 -> commit \(finalText.count)字")
+                commit(finalText)
                 lastPartial = ""
                 startRecognitionSegment()
             } else {
                 // 识别器偶发不带 isFinal 的重置：临时结果突然大幅变短，视为新段开始
-                if lastPartial.count > 10, text.count * 2 < lastPartial.count {
+                if lastPartial.count > 6, text.count * 2 < lastPartial.count {
+                    slog("SHRINK-RESET lastPartial=\(lastPartial.count)字 new=\(text.count)字，先提交旧段")
                     commit(lastPartial)
                 }
                 lastPartial = text
                 emit(current: text)
             }
         } else if error != nil {
+            slog("ERROR \((error as NSError?).map { "\($0.domain)#\($0.code)" } ?? "?") "
+                + "lastPartial=\(lastPartial.count)字 committed=\(committed.count)字")
             // 静默超时/服务断开：把已有临时结果提交后重开一段
             if !lastPartial.isEmpty {
                 commit(lastPartial)
@@ -192,6 +215,7 @@ final class SpeechRecorder {
         if !trimmed.isEmpty {
             committed = joined(committed, trimmed)
         }
+        slog("COMMIT +\(trimmed.count)字 -> committed=\(committed.count)字")
         emit(current: "")
     }
 

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Assets/icon.png" width="128" alt="PolishPad">
+</p>
+
 # PolishPad
 
 **English** | [简体中文](README.zh-CN.md)
