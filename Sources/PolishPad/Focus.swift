@@ -102,8 +102,15 @@ enum FocusTracker {
     /// 不同的元素对象，用 pid+角色+屏幕位置 兜底，避免误判"新目标"
     static func sameTarget(_ a: Target, _ b: Target) -> Bool {
         if CFEqual(a.element, b.element) { return true }
-        return a.pid == b.pid && a.role == b.role
-            && a.frame != .zero && a.frame == b.frame
+        guard a.pid == b.pid, a.role == b.role,
+              a.frame != .zero, b.frame != .zero else { return false }
+        if a.frame == b.frame { return true }
+        // 同一输入框会随内容增减高度（Slack 编辑器 76→150px），frame 精确
+        // 相等会认不出它：改为锚定不变的左边缘/宽度 + 垂直范围有重叠
+        // （上下排列的不同输入框垂直不重叠，不会误配）
+        return abs(a.frame.minX - b.frame.minX) < 2
+            && abs(a.frame.width - b.frame.width) < 2
+            && a.frame.maxY > b.frame.minY && b.frame.maxY > a.frame.minY
     }
 
     private static let textRoles: Set<String> = [
@@ -375,12 +382,22 @@ enum FocusTracker {
         let liveFrame = frameOf(target.element)
         Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height))")
         if liveFrame.width > 2, liveFrame.height > 2 {
+            // 只信任收拢的光标（length==0）：残留的非空选区一旦被恢复，
+            // 随后的 ⌘V 会把整个选区替换掉——这是内容意外消失的元凶
             var savedRange: CFTypeRef?
-            let hasSavedRange = AXUIElementCopyAttributeValue(
+            var hasSavedRange = false
+            if AXUIElementCopyAttributeValue(
                 target.element, kAXSelectedTextRangeAttribute as CFString,
-                &savedRange) == .success
-                && savedRange != nil
-                && CFGetTypeID(savedRange!) == AXValueGetTypeID()
+                &savedRange) == .success, let savedRange,
+                CFGetTypeID(savedRange) == AXValueGetTypeID() {
+                var r = CFRange()
+                if AXValueGetValue(savedRange as! AXValue, .cfRange, &r),
+                   r.length == 0 {
+                    hasSavedRange = true
+                } else {
+                    Diag.log("ENSURE saved range not a caret (len=\(r.length)), ignoring")
+                }
+            }
 
             var clickPoint = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
             var clickedAtCaret = false
