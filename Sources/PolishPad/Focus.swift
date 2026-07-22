@@ -102,15 +102,8 @@ enum FocusTracker {
     /// 不同的元素对象，用 pid+角色+屏幕位置 兜底，避免误判"新目标"
     static func sameTarget(_ a: Target, _ b: Target) -> Bool {
         if CFEqual(a.element, b.element) { return true }
-        guard a.pid == b.pid, a.role == b.role,
-              a.frame != .zero, b.frame != .zero else { return false }
-        if a.frame == b.frame { return true }
-        // 同一输入框会随内容增减高度（Slack 编辑器 76→150px），frame 精确
-        // 相等会认不出它：改为锚定不变的左边缘/宽度 + 垂直范围有重叠
-        // （上下排列的不同输入框垂直不重叠，不会误配）
-        return abs(a.frame.minX - b.frame.minX) < 2
-            && abs(a.frame.width - b.frame.width) < 2
-            && a.frame.maxY > b.frame.minY && b.frame.maxY > a.frame.minY
+        return a.pid == b.pid && a.role == b.role
+            && a.frame != .zero && a.frame == b.frame
     }
 
     private static let textRoles: Set<String> = [
@@ -161,206 +154,6 @@ enum FocusTracker {
     /// - 目标是明确的非文本控件（按钮/图标等）：拒绝，调用方走"仅复制"
     /// - 目标是输入框：精确恢复；恢复不了但当前焦点合理（文本框/容器）也放行，
     ///   只有当前焦点明确落在非文本控件上才拒绝
-    /// 目标元素的实时屏幕区域
-    static func liveFrame(of target: Target) -> CGRect {
-        frameOf(target.element)
-    }
-
-    /// 唤醒开关失效时重置（下次查询重新唤醒该进程）
-    static func forgetWake(pid: pid_t) {
-        wokenLock.lock()
-        wokenPIDs.remove(pid)
-        wokenLock.unlock()
-    }
-
-    /// 规范化文本用于内容比较：剥掉全部空白与零宽/不可见字符，
-    /// 只留"可见内容骨架"——格式漂移不影响判定，真实增删改必然打破匹配
-    static func canonical(_ text: String) -> String {
-        let invisible: Set<Character> = ["\u{200B}", "\u{200C}", "\u{200D}",
-                                         "\u{FEFF}", "\u{2060}", "\u{FFFC}"]
-        return String(text.filter { char in
-            !char.isWhitespace && !char.isNewline && !invisible.contains(char)
-        })
-    }
-
-    /// 某文本区间在屏幕上的位置（光标处的字符矩形；不可用返回 nil）
-    private static func boundsOfRange(
-        _ rangeValue: AXValue, in element: AXUIElement
-    ) -> CGRect? {
-        var boundsRef: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(
-            element, kAXBoundsForRangeParameterizedAttribute as CFString,
-            rangeValue, &boundsRef) == .success,
-            let boundsRef, CFGetTypeID(boundsRef) == AXValueGetTypeID() else { return nil }
-        var rect = CGRect.zero
-        guard AXValueGetValue(boundsRef as! AXValue, .cgRect, &rect) else { return nil }
-        return rect
-    }
-
-    /// 目标输入框的光标位置（UTF-16 偏移，选区取末端；不可读返回 nil）
-    static func caretLocation(of target: Target?) -> Int? {
-        guard let target else { return nil }
-        var rangeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            target.element, kAXSelectedTextRangeAttribute as CFString,
-            &rangeRef) == .success,
-            let rangeRef, CFGetTypeID(rangeRef) == AXValueGetTypeID() else { return nil }
-        var range = CFRange()
-        guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &range) else { return nil }
-        return range.location + range.length
-    }
-
-    /// 读取目标输入框的当前文本内容（不可读返回 nil）
-    static func value(of target: Target?) -> String? {
-        guard let target else { return nil }
-        var valueRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            target.element, kAXValueAttribute as CFString, &valueRef) == .success else {
-            return nil
-        }
-        return valueRef as? String
-    }
-
-    /// 替换旧文本的策略
-    enum ReplaceStrategy {
-        case selected     // 已精确选中旧文本，⌘V 直接替换选区
-        case backspaces   // 值不可读（终端）或旧文本恰在末尾：退格删除
-        case insertOnly   // 旧文本找不到/位置不安全：绝不删除，只追加
-    }
-
-    /// 精确定位并选中上次贴入的文本。删除的安全层级：
-    /// 能选中 > 末尾退格 > 不删只贴，绝不从任意位置盲删
-    static func prepareReplace(of text: String, in target: Target?) -> ReplaceStrategy {
-        guard let target else { return .backspaces }
-        var valueRef: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(
-            target.element, kAXValueAttribute as CFString, &valueRef)
-        guard status == .success, let value = valueRef as? String else {
-            return .backspaces // 值不可读（终端等）：退格是唯一手段
-        }
-        // 1) 精确子串匹配
-        if let range = value.range(of: text, options: .backwards) {
-            let utf16 = value.utf16
-            if let lower = range.lowerBound.samePosition(in: utf16) {
-                let location = utf16.distance(from: utf16.startIndex, to: lower)
-                let cfRange = CFRange(location: location, length: text.utf16.count)
-                if selectAndVerify(cfRange, expecting: text,
-                                   in: target.element, value: value) {
-                    return .selected
-                }
-            }
-            // 选不中：只有旧文本恰好在值末尾时，末尾退格才是安全的
-            return value.hasSuffix(text) ? .backspaces : .insertOnly
-        }
-        // 2) 空白容错匹配：Slack 等富文本框会改写空白/换行（\n\n → \n 等），
-        //    精确匹配失败时按非空白词块序列定位，选中 value 中的真实范围
-        if let cfRange = fuzzyRange(of: text, in: value),
-           selectAndVerify(cfRange, expecting: text,
-                           in: target.element, value: value) {
-            Diag.log("REPLACE fuzzy match at \(cfRange.location) len=\(cfRange.length)")
-            return .selected
-        }
-        Diag.log("REPLACE no match value=\(value.count)ch text=\(text.count)ch")
-        return .insertOnly // 旧文本已被用户改掉：绝不乱删
-    }
-
-    /// 选中 range 并核实选中的确实是目标文本（词块归一比较，容忍空白差异；
-    /// 应用不支持读选中文本时改为读回选区位置核实）。
-    /// 核实失败时把选区收拢回末尾——选区已被动过，不收回 ⌘V 会误吃错误选区
-    private static func selectAndVerify(
-        _ range: CFRange, expecting text: String,
-        in element: AXUIElement, value: String
-    ) -> Bool {
-        var cfRange = range
-        guard let axRange = AXValueCreate(.cfRange, &cfRange),
-              AXUIElementSetAttributeValue(
-                  element, kAXSelectedTextRangeAttribute as CFString,
-                  axRange) == .success else { return false }
-        var selectedRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(
-            element, kAXSelectedTextAttribute as CFString,
-            &selectedRef) == .success, let selected = selectedRef as? String {
-            if selected == text || canonicalWords(selected) == canonicalWords(text) {
-                return true
-            }
-        } else {
-            var rangeRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(
-                element, kAXSelectedTextRangeAttribute as CFString,
-                &rangeRef) == .success, let rangeRef,
-                CFGetTypeID(rangeRef) == AXValueGetTypeID() {
-                var readBack = CFRange()
-                if AXValueGetValue(rangeRef as! AXValue, .cfRange, &readBack),
-                   readBack.location == range.location,
-                   readBack.length == range.length {
-                    return true
-                }
-            }
-        }
-        var endRange = CFRange(location: value.utf16.count, length: 0)
-        if let collapse = AXValueCreate(.cfRange, &endRange) {
-            AXUIElementSetAttributeValue(
-                element, kAXSelectedTextRangeAttribute as CFString, collapse)
-        }
-        return false
-    }
-
-    /// 零宽字符：不参与词块内容比较
-    private static let ignorableChars: Set<Character> = [
-        "\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}",
-    ]
-
-    /// 按空白切词，记录每个词块在原文中的 UTF-16 起止位置
-    private static func wordChunks(
-        _ s: String
-    ) -> [(norm: String, start: Int, end: Int)] {
-        var result: [(norm: String, start: Int, end: Int)] = []
-        var norm = ""
-        var start = 0
-        var offset = 0
-        for ch in s {
-            let width = String(ch).utf16.count
-            if ch.isWhitespace {
-                if !norm.isEmpty {
-                    result.append((norm, start, offset))
-                    norm = ""
-                }
-            } else if !ignorableChars.contains(ch) {
-                if norm.isEmpty { start = offset }
-                norm.append(ch)
-            }
-            offset += width
-        }
-        if !norm.isEmpty { result.append((norm, start, offset)) }
-        return result
-    }
-
-    private static func canonicalWords(_ s: String) -> String {
-        wordChunks(s).map(\.norm).joined(separator: " ")
-    }
-
-    /// 空白容错定位：按词块序列从后往前找 text 在 value 中的 UTF-16 范围
-    private static func fuzzyRange(of text: String, in value: String) -> CFRange? {
-        let needle = wordChunks(text).map(\.norm)
-        let hay = wordChunks(value)
-        guard !needle.isEmpty, hay.count >= needle.count else { return nil }
-        var i = hay.count - needle.count
-        while i >= 0 {
-            var matched = true
-            for j in 0..<needle.count where hay[i + j].norm != needle[j] {
-                matched = false
-                break
-            }
-            if matched {
-                let start = hay[i].start
-                let end = hay[i + needle.count - 1].end
-                return CFRange(location: start, length: end - start)
-            }
-            i -= 1
-        }
-        return nil
-    }
-
     /// avoidRect：面板的屏幕区域（AX 顶左坐标系）——补点击绝不能点到面板自己
     static func ensureFocus(_ target: Target?, avoiding avoidRect: CGRect? = nil) async -> Bool {
         guard let target else { return true }
@@ -376,61 +169,23 @@ enum FocusTracker {
             target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        // Chromium 的 AXFocused 读数不可信，网页还会在失活时 blur 输入框——
-        // 对输入框目标一律像人一样真实点击。点击位置优先取用户光标所在
-        // 字符的屏幕坐标：点击本身就落在用户的插入点上，不依赖选区恢复
+        // Chromium 的 AXFocused 读数与真实 DOM 焦点不是一回事（实测会谎报 true），
+        // 网页还常在浏览器失活时 blur 输入框——所以对输入框目标一律像人一样
+        // 真实点击一次（实时坐标），再 ⌘↓ 把光标移到末尾，然后才允许粘贴
         let liveFrame = frameOf(target.element)
-        Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height))")
-        if liveFrame.width > 2, liveFrame.height > 2 {
-            // 只信任收拢的光标（length==0）：残留的非空选区一旦被恢复，
-            // 随后的 ⌘V 会把整个选区替换掉——这是内容意外消失的元凶
-            var savedRange: CFTypeRef?
-            var hasSavedRange = false
-            if AXUIElementCopyAttributeValue(
-                target.element, kAXSelectedTextRangeAttribute as CFString,
-                &savedRange) == .success, let savedRange,
-                CFGetTypeID(savedRange) == AXValueGetTypeID() {
-                var r = CFRange()
-                if AXValueGetValue(savedRange as! AXValue, .cfRange, &r),
-                   r.length == 0 {
-                    hasSavedRange = true
-                } else {
-                    Diag.log("ENSURE saved range not a caret (len=\(r.length)), ignoring")
-                }
-            }
-
-            var clickPoint = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
-            var clickedAtCaret = false
-            if hasSavedRange, let savedRange,
-               let caretRect = boundsOfRange(savedRange as! AXValue, in: target.element),
-               caretRect.height > 1,
-               liveFrame.insetBy(dx: -4, dy: -4).contains(
-                   CGPoint(x: caretRect.midX, y: caretRect.midY)) {
-                clickPoint = CGPoint(
-                    x: min(max(caretRect.midX, liveFrame.minX + 2), liveFrame.maxX - 2),
-                    y: min(max(caretRect.midY, liveFrame.minY + 2), liveFrame.maxY - 2))
-                clickedAtCaret = true
-            }
+        let center = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
+        let overlapsPanel = avoidRect?.contains(center) ?? false
+        Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height)) overlapsPanel=\(overlapsPanel)")
+        if liveFrame.width > 2, liveFrame.height > 2, !overlapsPanel {
             await MainActor.run {
-                KeySimulator.postClick(at: clickPoint)
+                KeySimulator.postClick(at: center)
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
-
-            var caretRestored = false
-            if hasSavedRange, let savedRange,
-               AXUIElementSetAttributeValue(
-                   target.element, kAXSelectedTextRangeAttribute as CFString,
-                   savedRange) == .success {
-                caretRestored = true
-            }
-            // 只有既没能点在光标位置、又恢复不了选区时，才退到末尾兜底
-            if !caretRestored, !clickedAtCaret {
-                await MainActor.run {
-                    KeySimulator.postCommandKey(125)
-                }
+            await MainActor.run {
+                KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
-            Diag.log("ENSURE clicked atCaret=\(clickedAtCaret) restored=\(caretRestored)")
+            Diag.log("ENSURE force-clicked")
             return true
         }
 

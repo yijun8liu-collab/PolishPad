@@ -1,24 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// 单个输入框的完整会话快照（会话跟着输入框走）
-struct SessionSnapshot {
-    var phase: SessionModel.Phase
-    var feedbackMode: SessionModel.FeedbackMode
-    var draft: String
-    var feedback: String
-    var currentResult: String
-    var statusText: String
-    var versions: [String]
-    var shownVersion: Int
-    var messages: [ChatMessage]
-    var activePreset: PromptPreset
-    var hasAutoPasted: Bool
-    var sessionID: UUID
-    var lastPastedText: String?
-    var hasAppendedSegments = false
-}
-
 @MainActor
 final class SessionModel: ObservableObject {
     enum Phase {
@@ -27,7 +9,7 @@ final class SessionModel: ObservableObject {
     }
 
     enum FeedbackMode {
-        case append   // 追加：输入的是新内容，优化后直接插入光标处（默认）
+        case append   // 追加：输入的是新内容，优化后并入全文（默认）
         case revise   // 修改：输入的是对当前版本的修改意见
     }
 
@@ -70,14 +52,8 @@ final class SessionModel: ObservableObject {
     private var sessionID = UUID()
 
     var onRequestClose: (() -> Void)?
-    /// 用户主动重开会话（⌘N）时触发：清除该输入框的会话记忆
-    var onSessionReset: (() -> Void)?
     /// 提交前触发目标确认（与 API 请求并行执行）
     var onWillSubmit: (() -> Void)?
-    /// 读取当前目标输入框的实际内容（用户可能手动编辑过）
-    var fieldContentProvider: (() -> String?)?
-    /// 采纳了输入框的编辑版本时通知（替换基线同步）
-    var onFieldTextAdopted: ((String) -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
@@ -168,7 +144,6 @@ final class SessionModel: ObservableObject {
             ChatMessage(role: "system", content: systemContent(config)),
             ChatMessage(role: "user", content: "<input>\n\(currentResult)\n</input>"),
         ]
-        pendingRoundTag = nil
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -204,7 +179,6 @@ final class SessionModel: ObservableObject {
             ChatMessage(role: "system", content: systemContent(config)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
-        pendingRoundTag = nil
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -257,18 +231,6 @@ final class SessionModel: ObservableObject {
             errorMessage = error.localizedDescription
             return
         }
-        // 以输入框里的实际内容为准：用户手动删改过时，把对话基线和
-        // 替换基线都对齐到编辑后的版本——AI 尊重用户编辑，替换不再重复。
-        // 只在「修改」轮次做，且会话从未追加过（追加后输入框是多段拼合，
-        // 吸附会把全文误当成上一段结果，修改时把整个输入框替换掉）
-        if tag == "feedback", !hasAppendedSegments, hasAutoPasted,
-           let fieldText = fieldContentProvider?()?
-               .trimmingCharacters(in: .whitespacesAndNewlines),
-           !fieldText.isEmpty, fieldText != currentResult,
-           DiffRenderer.similarity(between: currentResult, and: fieldText) >= 0.5 {
-            currentResult = fieldText
-            onFieldTextAdopted?(fieldText)
-        }
         // 失败时不污染已有会话：本轮消息成功后才提交进 messages
         // 系统消息按当前语言/场景重建，中途切换也即时生效
         var base = messages
@@ -283,7 +245,6 @@ final class SessionModel: ObservableObject {
         let requestMessages = base + [
             ChatMessage(role: "user", content: "<\(tag)>\n\(note)\n</\(tag)>")
         ]
-        pendingRoundTag = tag
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -327,14 +288,6 @@ final class SessionModel: ObservableObject {
     /// 本轮开始前的结果长度，用于疑似截断检测（流式期间 currentResult 已被覆盖）
     private var previousResultLength = 0
 
-    /// 本轮请求的标签（append/feedback/nil=首轮）。追加轮次只输出新增段：
-    /// 粘贴时不替换旧内容，直接插入光标处
-    private var pendingRoundTag: String?
-
-    /// 会话中出现过追加轮次：输入框内容 = 多段拼合，不再等于"上一版结果"，
-    /// 整体吸附（把输入框全文当基线）从此失效且危险，必须禁用
-    private var hasAppendedSegments = false
-
     private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
         let previousLength = previousResultLength
         versions.append(output)
@@ -342,11 +295,9 @@ final class SessionModel: ObservableObject {
         messages = requestMessages + [ChatMessage(role: "assistant", content: output)]
         currentResult = output
 
-        // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）。
-        // 追加轮次只输出新增段，天然比全文短，不适用
+        // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）
         var warning = ""
-        if version > 1, pendingRoundTag != "append",
-           output.count * 10 < previousLength * 3 {
+        if version > 1, output.count * 10 < previousLength * 3 {
             warning = t("（比上一版短很多，请检查是否完整）",
                         " (much shorter than the last version — check completeness)")
         }
@@ -364,11 +315,9 @@ final class SessionModel: ObservableObject {
         )
 
         if ConfigStore.loadRaw()?.autoPaste ?? true {
-            // 极速模式：出结果直接贴回原应用。「修改」轮次先删除上一版再贴；
-            // 「追加」轮次只输出了新增段，不删除任何内容，直接插入光标处
-            let replacePrevious = hasAutoPasted && pendingRoundTag != "append"
+            // 极速模式：出结果直接贴回原应用；纠偏轮次先删除上一版再贴
+            let replacePrevious = hasAutoPasted
             hasAutoPasted = true
-            if pendingRoundTag == "append" { hasAppendedSegments = true }
             onAutoPaste?(replacePrevious)
         } else {
             bumpFocus()
@@ -428,48 +377,6 @@ final class SessionModel: ObservableObject {
         feedbackMode = feedbackMode == .append ? .revise : .append
     }
 
-    /// 导出当前会话快照
-    func snapshot(lastPastedText: String?) -> SessionSnapshot {
-        SessionSnapshot(
-            phase: phase, feedbackMode: feedbackMode, draft: draft,
-            feedback: feedback, currentResult: currentResult, statusText: statusText,
-            versions: versions, shownVersion: shownVersion, messages: messages,
-            activePreset: activePreset, hasAutoPasted: hasAutoPasted,
-            sessionID: sessionID, lastPastedText: lastPastedText,
-            hasAppendedSegments: hasAppendedSegments
-        )
-    }
-
-    /// 恢复某个输入框的会话
-    func restore(_ snapshot: SessionSnapshot) {
-        stopDictation()
-        task?.cancel()
-        task = nil
-        isLoading = false
-        phase = snapshot.phase
-        feedbackMode = snapshot.feedbackMode
-        draft = snapshot.draft
-        feedback = snapshot.feedback
-        currentResult = snapshot.currentResult
-        statusText = snapshot.statusText
-        errorMessage = nil
-        versions = snapshot.versions
-        shownVersion = snapshot.shownVersion
-        messages = snapshot.messages
-        activePreset = snapshot.activePreset
-        hasAutoPasted = snapshot.hasAutoPasted
-        hasAppendedSegments = snapshot.hasAppendedSegments
-        sessionID = snapshot.sessionID
-        showDiff = false
-        autoPresetNote = nil
-        bumpFocus()
-    }
-
-    /// 会话是否有值得保留的内容
-    var hasContent: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !versions.isEmpty
-    }
-
     /// ⌘N 重新开始
     func resetSession() {
         stopDictation()
@@ -488,15 +395,12 @@ final class SessionModel: ObservableObject {
         showDiff = false
         messages = []
         hasAutoPasted = false
-        pendingRoundTag = nil
-        hasAppendedSegments = false
         sessionID = UUID()
         autoPresetNote = nil
         pasteTargetNote = nil
         activePreset = PromptPreset(
             rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
         bumpFocus()
-        onSessionReset?()
     }
 
     func copyOriginal() {
