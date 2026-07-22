@@ -33,10 +33,23 @@ enum FocusTracker {
             // Chromium/Electron（Slack、Chrome…）惰性可访问性：不唤醒查不到焦点。
             // 置唤醒开关（每进程一次）+ 应用级焦点查询；首次可能仍为 nil，
             // 预热完成后（约 1 秒）的下一次调用即可命中
-            value = queryFrontAppFocus()
+            guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+            value = queryAppFocus(pid: front.processIdentifier)
         }
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        let element = value as! AXUIElement
+        return buildTarget(from: value as! AXUIElement)
+    }
+
+    /// 查询任意应用当前内部聚焦的元素——应用不在前台也有效。
+    /// 这是"提交时确认目标"的基石：不依赖轮询抓拍瞬时焦点
+    static func focusedElement(inAppWithPID pid: pid_t) -> Target? {
+        guard AXIsProcessTrusted() else { return nil }
+        guard let value = queryAppFocus(pid: pid),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return buildTarget(from: value as! AXUIElement)
+    }
+
+    private static func buildTarget(from element: AXUIElement) -> Target {
         AXUIElementSetMessagingTimeout(element, axTimeout)
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
@@ -49,13 +62,12 @@ enum FocusTracker {
         )
     }
 
-    private static func queryFrontAppFocus() -> CFTypeRef? {
-        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
-        let appElement = AXUIElementCreateApplication(front.processIdentifier)
+    private static func queryAppFocus(pid: pid_t) -> CFTypeRef? {
+        let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, axTimeout)
         wokenLock.lock()
-        let alreadyWoken = wokenPIDs.contains(front.processIdentifier)
-        if !alreadyWoken { wokenPIDs.insert(front.processIdentifier) }
+        let alreadyWoken = wokenPIDs.contains(pid)
+        if !alreadyWoken { wokenPIDs.insert(pid) }
         wokenLock.unlock()
         if !alreadyWoken {
             // Electron 认 AXManualAccessibility；Chrome 认 AXEnhancedUserInterface

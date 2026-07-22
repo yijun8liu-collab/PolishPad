@@ -18,6 +18,8 @@ final class PanelController {
     private var lastPastedText: String?
     /// 面板打开期间轮询焦点：用户点进新输入框时切换粘贴目标
     private var focusPollTimer: Timer?
+    /// 最后被激活的外部应用（提交时向它查询真实焦点元素）
+    private var lastExternalApp: NSRunningApplication?
 
     init() {
         panel = KeyablePanel(
@@ -41,6 +43,17 @@ final class PanelController {
         panel.contentView = hosting
 
         model.onRequestClose = { [weak self] in self?.hide() }
+        model.onWillSubmit = { [weak self] in self?.refreshTargetFromLastApp() }
+        // 事件驱动记录"最后使用的外部应用"：零遗漏，不依赖轮询抓拍
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication,
+                app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            Task { @MainActor in self?.lastExternalApp = app }
+        }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
         model.onAutoPaste = { [weak self] replacePrevious in
             self?.pasteAndReturn(replacePrevious: replacePrevious)
@@ -64,6 +77,7 @@ final class PanelController {
         lastPastedText = nil
         pasteMemory = []
         previousApp = NSWorkspace.shared.frontmostApplication
+        lastExternalApp = previousApp
         focusTarget = nil
         // AX 捕获放后台（Chromium 慢 AX 会卡住面板弹出），完成后回填
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -155,7 +169,33 @@ final class PanelController {
             }
             return
         }
-        // 切换粘贴目标（会话上下文不动，只改结果去向）
+        switchTarget(to: now)
+    }
+
+    /// 提交那一刻确认真实目标：查询最后使用的外部应用"内部聚焦的元素"。
+    /// 应用即使不在前台也记着自己的焦点，这个查询不依赖轮询能否抓到瞬时状态，
+    /// 彻底解决"点了新输入框马上回面板打字"导致的目标未切换
+    func refreshTargetFromLastApp() {
+        guard let app = lastExternalApp, !app.isTerminated else { return }
+        let pid = app.processIdentifier
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let captured = FocusTracker.focusedElement(inAppWithPID: pid)
+            await MainActor.run {
+                guard let self, let now = captured,
+                      FocusTracker.isTextLike(now) else { return }
+                if let current = self.focusTarget, FocusTracker.sameTarget(current, now) {
+                    if !CFEqual(current.element, now.element) {
+                        self.focusTarget = now
+                    }
+                    return
+                }
+                self.switchTarget(to: now)
+            }
+        }
+    }
+
+    /// 切换粘贴目标（会话上下文不动，只改结果去向）
+    private func switchTarget(to now: FocusTracker.Target) {
         focusTarget = now
         let app = NSRunningApplication(processIdentifier: now.pid)
         previousApp = app

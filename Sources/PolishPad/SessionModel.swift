@@ -52,6 +52,8 @@ final class SessionModel: ObservableObject {
     private var sessionID = UUID()
 
     var onRequestClose: (() -> Void)?
+    /// 提交前触发目标确认（与 API 请求并行执行）
+    var onWillSubmit: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
@@ -247,6 +249,7 @@ final class SessionModel: ObservableObject {
     }
 
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
+        onWillSubmit?()
         isLoading = true
         errorMessage = nil
         showDiff = false
