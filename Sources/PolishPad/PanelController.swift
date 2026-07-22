@@ -12,14 +12,8 @@ final class PanelController {
     let model = SessionModel()
     /// 唤起前的前台应用，关窗后把焦点还回去
     private var previousApp: NSRunningApplication?
-    /// 唤起时聚焦的具体输入框元素（粘贴前精确恢复焦点，防止盲贴）
-    private var focusTarget: FocusTracker.Target?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
     private var lastPastedText: String?
-    /// 面板打开期间轮询焦点：用户点进新输入框时切换粘贴目标
-    private var focusPollTimer: Timer?
-    /// 最后被激活的外部应用（提交时向它查询真实焦点元素）
-    private var lastExternalApp: NSRunningApplication?
 
     init() {
         panel = KeyablePanel(
@@ -43,26 +37,35 @@ final class PanelController {
         panel.contentView = hosting
 
         model.onRequestClose = { [weak self] in self?.hide() }
-        model.onWillSubmit = { [weak self] in self?.refreshTargetFromLastApp() }
-        // 事件驱动记录"最后使用的外部应用"：零遗漏，不依赖轮询抓拍
+        model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
+        model.onAutoPaste = { [weak self] replacePrevious in
+            self?.pasteAndReturn(replacePrevious: replacePrevious)
+        }
+
+        // 面板开着时用户切到了别的应用：粘贴目标跟着走。
+        // 同应用内换输入框无需跟踪——⌘V 天然落在应用当前聚焦的输入框
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
-                as? NSRunningApplication,
-                app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-            Diag.log("ACTIVATE \(app.bundleIdentifier ?? "?")")
-            Task { @MainActor in self?.lastExternalApp = app }
-        }
-        model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
-        model.onAutoPaste = { [weak self] replacePrevious in
-            self?.pasteAndReturn(replacePrevious: replacePrevious)
+                    as? NSRunningApplication else { return }
+            Task { @MainActor in self?.externalAppActivated(app) }
         }
     }
 
-    var isVisible: Bool { panel.isVisible }
+    /// 面板可见期间外部应用被激活：更新粘贴目标。
+    /// 上一次粘贴不在新目标里，清掉替换基线，避免在新输入框里误退格
+    private func externalAppActivated(_ app: NSRunningApplication) {
+        guard panel.isVisible,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              app.processIdentifier != previousApp?.processIdentifier else { return }
+        previousApp = app
+        lastPastedText = nil
+        model.pasteTargetSwitched(to: app.localizedName ?? "新目标")
+    }
 
+    var isVisible: Bool { panel.isVisible }
 
     func toggle() {
         if panel.isVisible {
@@ -76,27 +79,7 @@ final class PanelController {
         // 每次唤起都是全新会话（关窗即结束上一次对话）
         model.resetSession()
         lastPastedText = nil
-        pasteMemory = []
         previousApp = NSWorkspace.shared.frontmostApplication
-        lastExternalApp = previousApp
-        focusTarget = nil
-        // AX 捕获放后台（Chromium 慢 AX 会卡住面板弹出），完成后回填
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let captured = FocusTracker.captureFocused()
-            Diag.log("SHOW captured role=\(captured?.role ?? "nil") pid=\(captured?.pid ?? 0)")
-            await MainActor.run {
-                guard let self else { return }
-                self.focusTarget = captured
-                // 唤起时焦点明确在非文本控件上：明示"完成后仅复制"。
-                // 容器类（Chromium 常态）不提示——应用级粘贴仍会正确路由
-                if ConfigStore.loadRaw()?.autoPaste ?? true,
-                   captured != nil, FocusTracker.kind(of: captured) == .control {
-                    self.model.pasteTargetNote = self.model.t(
-                        "未检测到输入框 · 完成后仅复制",
-                        "No text field · will copy only")
-                }
-            }
-        }
         // 应用感知：按唤起前的前台应用自动选场景
         model.applyAutoPreset(
             bundleID: previousApp?.bundleIdentifier,
@@ -119,142 +102,9 @@ final class PanelController {
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
-        startFocusTracking()
-    }
-
-    /// 本会话内"哪个输入框贴过什么"的记忆：切回旧框恢复替换语义，防止重复文本
-    private var pasteMemory: [(target: FocusTracker.Target, pasted: String)] = []
-
-    /// 面板打开期间跟踪焦点：用户点进别的输入框 = 切换粘贴目标
-    private func startFocusTracking() {
-        focusPollTimer?.invalidate()
-        focusPollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollFocusedTarget() }
-        }
-    }
-
-    private func stopFocusTracking() {
-        focusPollTimer?.invalidate()
-        focusPollTimer = nil
-    }
-
-    /// 防重入：AX 采集可能比轮询间隔还慢
-    private var pollInFlight = false
-
-    private func pollFocusedTarget() {
-        guard panel.isVisible else { return }
-        // 请求进行中冻结目标：本轮贴到提交时的输入框
-        guard !model.isLoading, !pollInFlight else { return }
-        pollInFlight = true
-        // AX 采集放后台线程：慢应用的 AX 调用会逐个顶满超时，不能占主线程
-        Task.detached(priority: .utility) { [weak self] in
-            let captured = FocusTracker.captureFocused()
-            await MainActor.run {
-                self?.pollInFlight = false
-                self?.handlePolledTarget(captured)
-            }
-        }
-    }
-
-    private func handlePolledTarget(_ captured: FocusTracker.Target?) {
-        guard panel.isVisible, !model.isLoading else { return }
-        guard let now = captured else { return }
-        // 面板自身的编辑框不算目标
-        guard now.pid != ProcessInfo.processInfo.processIdentifier else { return }
-        // 只认有效输入框：点到桌面/按钮/菜单/密码框不切换、不丢失原目标
-        guard FocusTracker.isTextLike(now) else { return }
-        if let current = focusTarget, FocusTracker.sameTarget(current, now) {
-            // 同一逻辑输入槽但元素对象已更换（web/Electron 重建 DOM）：刷新引用，
-            // 否则后续 ensureFocus 拿着失效元素操作
-            if !CFEqual(current.element, now.element) {
-                focusTarget = now
-            }
-            return
-        }
-        switchTarget(to: now)
-    }
-
-    /// 提交那一刻确认真实目标：查询最后使用的外部应用"内部聚焦的元素"。
-    /// 应用即使不在前台也记着自己的焦点，这个查询不依赖轮询能否抓到瞬时状态，
-    /// 彻底解决"点了新输入框马上回面板打字"导致的目标未切换
-    func refreshTargetFromLastApp() {
-        guard let app = lastExternalApp, !app.isTerminated else { return }
-        let pid = app.processIdentifier
-        Task.detached(priority: .userInitiated) { [weak self] in
-            // Chromium 的焦点报告会在容器/输入框之间摆动，单次采样可能
-            // 恰好撞上容器态——重试直到问到真正的输入框（API 等待期内完成）
-            var found: FocusTracker.Target?
-            for attempt in 0..<4 {
-                let captured = FocusTracker.focusedElement(inAppWithPID: pid)
-                Diag.log("REFRESH try\(attempt) pid=\(pid) role=\(captured?.role ?? "nil") textLike=\(FocusTracker.isTextLike(captured))")
-                if let captured, FocusTracker.isTextLike(captured) {
-                    found = captured
-                    break
-                }
-                if attempt < 3 {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                }
-            }
-            guard let now = found else {
-                Diag.log("REFRESH giving up")
-                return
-            }
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                if let current = self.focusTarget, FocusTracker.sameTarget(current, now) {
-                    if !CFEqual(current.element, now.element) {
-                        self.focusTarget = now
-                    }
-                    return
-                }
-                self.switchTarget(to: now)
-            }
-        }
-    }
-
-    /// 切换粘贴目标（会话上下文不动，只改结果去向）
-    private func switchTarget(to now: FocusTracker.Target) {
-        Diag.log("SWITCH to role=\(now.role) pid=\(now.pid) frame=\(Int(now.frame.minX)),\(Int(now.frame.minY)),\(Int(now.frame.width))x\(Int(now.frame.height))")
-        focusTarget = now
-        let app = NSRunningApplication(processIdentifier: now.pid)
-        previousApp = app
-        // 恢复该输入框的粘贴记忆：贴过 → 替换语义；没贴过 → 插入语义
-        if let memory = pasteMemory.first(where: { FocusTracker.sameTarget($0.target, now) }) {
-            lastPastedText = memory.pasted
-            model.hasAutoPasted = true
-        } else {
-            lastPastedText = nil
-            model.hasAutoPasted = false
-        }
-        model.pasteTargetNote = model.t(
-            "粘贴目标：\(app?.localizedName ?? "新输入框")",
-            "Paste target: \(app?.localizedName ?? "new field")")
-    }
-
-    /// 面板的屏幕区域（AX 顶左坐标系），补点击避让用
-    private func panelAXFrame() -> CGRect? {
-        guard panel.isVisible, let primary = NSScreen.screens.first else { return nil }
-        let frame = panel.frame
-        return CGRect(
-            x: frame.minX,
-            y: primary.frame.maxY - frame.maxY,
-            width: frame.width,
-            height: frame.height
-        )
-    }
-
-    /// 记录/更新"当前目标贴了什么"
-    private func rememberPaste(_ text: String?) {
-        guard let text, let target = focusTarget else { return }
-        if let index = pasteMemory.firstIndex(where: { FocusTracker.sameTarget($0.target, target) }) {
-            pasteMemory[index] = (target, text)
-        } else {
-            pasteMemory.append((target, text))
-        }
     }
 
     func hide() {
-        stopFocusTracking()
         model.stopDictation()
         panel.orderOut(nil)
         // 焦点还给唤起前的应用，方便直接 ⌘V
@@ -289,31 +139,14 @@ final class PanelController {
                 }
                 app.activate()
             }
-            Diag.log("PASTE app=\(app.bundleIdentifier ?? "?") activated=\(activated) replace=\(replacePrevious) targetRole=\(self.focusTarget?.role ?? "nil")")
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                // 精确恢复到唤起时的输入框；恢复不了就不盲贴
-                let ok = await FocusTracker.ensureFocus(
-                    self.focusTarget, avoiding: self.panelAXFrame())
-                Diag.log("PASTE ensureFocus=\(ok)")
-                guard ok else {
-                    self.model.statusText = self.model.t(
-                        "✅ 已复制（未检测到可用输入框，请手动粘贴）",
-                        "✅ Copied (no usable text field — paste manually)")
-                    HUD.shared.flashSuccess(UILang.t("已复制", "Copied"))
-                    self.panel.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                    self.model.bumpFocus()
-                    return
-                }
                 let replacedOld = replacePrevious ? self.lastPastedText : nil
                 await self.deletePreviousPasteIfNeeded(replacePrevious)
                 KeySimulator.postCommandKey(KeySimulator.keyV)
                 self.lastPastedText = NSPasteboard.general.string(forType: .string)
-                self.rememberPaste(self.lastPastedText)
                 ReplacementUndo.shared.record(
-                    pasted: self.lastPastedText, replaced: replacedOld,
-                    app: app, target: self.focusTarget)
+                    pasted: self.lastPastedText, replaced: replacedOld, app: app)
                 HUD.shared.flashSuccess(replacePrevious
                     ? UILang.t("已替换", "Replaced")
                     : UILang.t("已粘贴", "Pasted"))
@@ -376,19 +209,12 @@ final class PanelController {
             }
             // 再留一点时间让焦点落回输入框
             try? await Task.sleep(nanoseconds: 200_000_000)
-            guard await FocusTracker.ensureFocus(self.focusTarget) else {
-                HUD.shared.flashSuccess(UILang.t(
-                    "已复制（未检测到可用输入框，请手动粘贴）",
-                    "Copied (no usable text field — paste manually)"))
-                return
-            }
             let replacedOld = replacePrevious ? self.lastPastedText : nil
             await self.deletePreviousPasteIfNeeded(replacePrevious)
             KeySimulator.postCommandKey(KeySimulator.keyV)
             self.lastPastedText = NSPasteboard.general.string(forType: .string)
             ReplacementUndo.shared.record(
-                pasted: self.lastPastedText, replaced: replacedOld,
-                app: app, target: self.focusTarget)
+                pasted: self.lastPastedText, replaced: replacedOld, app: app)
             HUD.shared.flashSuccess(replacePrevious
                 ? UILang.t("已替换", "Replaced")
                 : UILang.t("已粘贴", "Pasted"))

@@ -28,8 +28,6 @@ final class SessionModel: ObservableObject {
     @Published var activePreset: PromptPreset = .polish
     /// 应用感知自动选择的提示（手动切换后清除）
     @Published var autoPresetNote: String?
-    /// 唤起时未检测到输入框的提示（此时完成后仅复制，不盲贴）
-    @Published var pasteTargetNote: String?
     /// 当前显示第几版（1-based）
     @Published var shownVersion = 0
     /// 改动对比视图开关
@@ -52,15 +50,12 @@ final class SessionModel: ObservableObject {
     private var sessionID = UUID()
 
     var onRequestClose: (() -> Void)?
-    /// 提交前触发目标确认（与 API 请求并行执行）
-    var onWillSubmit: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
     var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
-    /// 当前粘贴目标里是否已经贴过本会话内容（决定替换/插入与空 Enter 语义；
-    /// 目标切换时由 PanelController 按逐目标记忆更新）
-    var hasAutoPasted = false
+    /// 本会话是否已经自动粘贴过（决定下次是否先删除）
+    private var hasAutoPasted = false
 
     init() {
         speech.onStateChange = { [weak self] recording in
@@ -186,6 +181,14 @@ final class SessionModel: ObservableObject {
         config.resolvedSystemPrompt(english: outputEnglish, presetOverride: activePreset)
     }
 
+    /// 面板开着时粘贴目标切到了别的应用：上一次粘贴不在新目标里，
+    /// 回到插入语义（回车直接贴，不退格替换）
+    func pasteTargetSwitched(to appName: String) {
+        hasAutoPasted = false
+        guard phase == .reviewing else { return }
+        statusText = t("粘贴目标 → \(appName)", "Paste target → \(appName)")
+    }
+
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
     func requestCloseAndPaste() {
         guard !currentResult.isEmpty else {
@@ -249,7 +252,6 @@ final class SessionModel: ObservableObject {
     }
 
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
-        onWillSubmit?()
         isLoading = true
         errorMessage = nil
         showDiff = false
@@ -397,7 +399,6 @@ final class SessionModel: ObservableObject {
         hasAutoPasted = false
         sessionID = UUID()
         autoPresetNote = nil
-        pasteTargetNote = nil
         activePreset = PromptPreset(
             rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
         bumpFocus()
