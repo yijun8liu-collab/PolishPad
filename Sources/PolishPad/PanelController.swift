@@ -179,10 +179,22 @@ final class PanelController {
         guard let app = lastExternalApp, !app.isTerminated else { return }
         let pid = app.processIdentifier
         Task.detached(priority: .userInitiated) { [weak self] in
-            let captured = FocusTracker.focusedElement(inAppWithPID: pid)
-            await MainActor.run {
-                guard let self, let now = captured,
-                      FocusTracker.isTextLike(now) else { return }
+            // Chromium 的焦点报告会在容器/输入框之间摆动，单次采样可能
+            // 恰好撞上容器态——重试直到问到真正的输入框（API 等待期内完成）
+            var found: FocusTracker.Target?
+            for attempt in 0..<4 {
+                if let captured = FocusTracker.focusedElement(inAppWithPID: pid),
+                   FocusTracker.isTextLike(captured) {
+                    found = captured
+                    break
+                }
+                if attempt < 3 {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
+            }
+            guard let now = found else { return }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if let current = self.focusTarget, FocusTracker.sameTarget(current, now) {
                     if !CFEqual(current.element, now.element) {
                         self.focusTarget = now
