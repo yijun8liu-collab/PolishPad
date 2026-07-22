@@ -154,6 +154,94 @@ enum FocusTracker {
     /// - 目标是明确的非文本控件（按钮/图标等）：拒绝，调用方走"仅复制"
     /// - 目标是输入框：精确恢复；恢复不了但当前焦点合理（文本框/容器）也放行，
     ///   只有当前焦点明确落在非文本控件上才拒绝
+    /// 目标元素的实时屏幕区域
+    static func liveFrame(of target: Target) -> CGRect {
+        frameOf(target.element)
+    }
+
+    /// 唤醒开关失效时重置（下次查询重新唤醒该进程）
+    static func forgetWake(pid: pid_t) {
+        wokenLock.lock()
+        wokenPIDs.remove(pid)
+        wokenLock.unlock()
+    }
+
+    /// 规范化文本用于内容比较：剥掉全部空白与零宽/不可见字符，
+    /// 只留"可见内容骨架"——格式漂移不影响判定，真实增删改必然打破匹配
+    static func canonical(_ text: String) -> String {
+        let invisible: Set<Character> = ["\u{200B}", "\u{200C}", "\u{200D}",
+                                         "\u{FEFF}", "\u{2060}", "\u{FFFC}"]
+        return String(text.filter { char in
+            !char.isWhitespace && !char.isNewline && !invisible.contains(char)
+        })
+    }
+
+    /// 目标输入框的光标位置（UTF-16 偏移，选区取末端；不可读返回 nil）
+    static func caretLocation(of target: Target?) -> Int? {
+        guard let target else { return nil }
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            target.element, kAXSelectedTextRangeAttribute as CFString,
+            &rangeRef) == .success,
+            let rangeRef, CFGetTypeID(rangeRef) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &range) else { return nil }
+        return range.location + range.length
+    }
+
+    /// 读取目标输入框的当前文本内容（不可读返回 nil）
+    static func value(of target: Target?) -> String? {
+        guard let target else { return nil }
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            target.element, kAXValueAttribute as CFString, &valueRef) == .success else {
+            return nil
+        }
+        return valueRef as? String
+    }
+
+    /// 替换旧文本的策略
+    enum ReplaceStrategy {
+        case selected     // 已精确选中旧文本，⌘V 直接替换选区
+        case backspaces   // 值不可读（终端）或旧文本恰在末尾：退格删除
+        case insertOnly   // 旧文本找不到/位置不安全：绝不删除，只追加
+    }
+
+    /// 精确定位并选中上次贴入的文本。删除的安全层级：
+    /// 能选中 > 末尾退格 > 不删只贴，绝不从任意位置盲删
+    static func prepareReplace(of text: String, in target: Target?) -> ReplaceStrategy {
+        guard let target else { return .backspaces }
+        var valueRef: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(
+            target.element, kAXValueAttribute as CFString, &valueRef)
+        guard status == .success, let value = valueRef as? String else {
+            return .backspaces // 值不可读（终端等）：退格是唯一手段
+        }
+        guard let range = value.range(of: text, options: .backwards) else {
+            return .insertOnly // 旧文本已被用户改掉：绝不乱删
+        }
+        // 尝试把旧文本精确选中，⌘V 替换选区
+        let utf16 = value.utf16
+        if let lower = range.lowerBound.samePosition(in: utf16) {
+            let location = utf16.distance(from: utf16.startIndex, to: lower)
+            var cfRange = CFRange(location: location, length: text.utf16.count)
+            if let axRange = AXValueCreate(.cfRange, &cfRange),
+               AXUIElementSetAttributeValue(
+                   target.element, kAXSelectedTextRangeAttribute as CFString,
+                   axRange) == .success {
+                var selectedRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(
+                    target.element, kAXSelectedTextAttribute as CFString,
+                    &selectedRef) == .success,
+                    (selectedRef as? String) == text {
+                    return .selected
+                }
+            }
+        }
+        // 选不中：只有旧文本恰好在值末尾时，末尾退格才是安全的
+        return value.hasSuffix(text) ? .backspaces : .insertOnly
+    }
+
     /// avoidRect：面板的屏幕区域（AX 顶左坐标系）——补点击绝不能点到面板自己
     static func ensureFocus(_ target: Target?, avoiding avoidRect: CGRect? = nil) async -> Bool {
         guard let target else { return true }
@@ -177,15 +265,29 @@ enum FocusTracker {
         let overlapsPanel = avoidRect?.contains(center) ?? false
         Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height)) overlapsPanel=\(overlapsPanel)")
         if liveFrame.width > 2, liveFrame.height > 2, !overlapsPanel {
+            // 用户可能特意把光标放在了某个位置——点击前记住，点击后恢复
+            var savedRange: CFTypeRef?
+            let hasSavedRange = AXUIElementCopyAttributeValue(
+                target.element, kAXSelectedTextRangeAttribute as CFString,
+                &savedRange) == .success
             await MainActor.run {
                 KeySimulator.postClick(at: center)
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
-            await MainActor.run {
-                KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾
+            var caretRestored = false
+            if hasSavedRange, let savedRange,
+               AXUIElementSetAttributeValue(
+                   target.element, kAXSelectedTextRangeAttribute as CFString,
+                   savedRange) == .success {
+                caretRestored = true
+            }
+            if !caretRestored {
+                await MainActor.run {
+                    KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾（兜底）
+                }
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
-            Diag.log("ENSURE force-clicked")
+            Diag.log("ENSURE force-clicked caretRestored=\(caretRestored)")
             return true
         }
 

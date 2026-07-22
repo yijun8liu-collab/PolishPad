@@ -68,6 +68,23 @@ enum DiffRenderer {
         return segments
     }
 
+    /// 两段文本的相似度（0~1）：判断输入框内容是否为某版本的"编辑版"
+    static func similarity(between a: String, and b: String) -> Double {
+        if a.isEmpty || b.isEmpty { return 0 }
+        if a.count + b.count <= maxLength {
+            let aChars = Array(a)
+            let bChars = Array(b)
+            let difference = bChars.difference(from: aChars)
+            let same = bChars.count - difference.insertions.count
+            return Double(same) / Double(max(aChars.count, bChars.count))
+        }
+        // 长文本近似：公共前缀 + 公共后缀占比
+        let prefix = zip(a, b).prefix { $0.0 == $0.1 }.count
+        let suffix = zip(a.reversed(), b.reversed()).prefix { $0.0 == $0.1 }.count
+        return Double(min(min(a.count, b.count), prefix + suffix))
+            / Double(max(a.count, b.count))
+    }
+
     /// 渲染为富文本：新增绿底、删除红字划线
     static func attributedString(from old: String, to new: String) -> AttributedString? {
         guard let segments = segments(from: old, to: new) else { return nil }

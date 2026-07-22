@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+/// 单个输入框的完整会话快照（会话跟着输入框走）
+struct SessionSnapshot {
+    var phase: SessionModel.Phase
+    var feedbackMode: SessionModel.FeedbackMode
+    var draft: String
+    var feedback: String
+    var currentResult: String
+    var statusText: String
+    var versions: [String]
+    var shownVersion: Int
+    var messages: [ChatMessage]
+    var activePreset: PromptPreset
+    var hasAutoPasted: Bool
+    var sessionID: UUID
+    var lastPastedText: String?
+}
+
 @MainActor
 final class SessionModel: ObservableObject {
     enum Phase {
@@ -52,8 +69,14 @@ final class SessionModel: ObservableObject {
     private var sessionID = UUID()
 
     var onRequestClose: (() -> Void)?
+    /// 用户主动重开会话（⌘N）时触发：清除该输入框的会话记忆
+    var onSessionReset: (() -> Void)?
     /// 提交前触发目标确认（与 API 请求并行执行）
     var onWillSubmit: (() -> Void)?
+    /// 读取当前目标输入框的实际内容（用户可能手动编辑过）
+    var fieldContentProvider: (() -> String?)?
+    /// 采纳了输入框的编辑版本时通知（替换基线同步）
+    var onFieldTextAdopted: ((String) -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
@@ -231,6 +254,16 @@ final class SessionModel: ObservableObject {
             errorMessage = error.localizedDescription
             return
         }
+        // 以输入框里的实际内容为准：用户手动删改过时，把对话基线和
+        // 替换基线都对齐到编辑后的版本——AI 尊重用户编辑，替换不再重复
+        if hasAutoPasted,
+           let fieldText = fieldContentProvider?()?
+               .trimmingCharacters(in: .whitespacesAndNewlines),
+           !fieldText.isEmpty, fieldText != currentResult,
+           DiffRenderer.similarity(between: currentResult, and: fieldText) >= 0.5 {
+            currentResult = fieldText
+            onFieldTextAdopted?(fieldText)
+        }
         // 失败时不污染已有会话：本轮消息成功后才提交进 messages
         // 系统消息按当前语言/场景重建，中途切换也即时生效
         var base = messages
@@ -377,6 +410,46 @@ final class SessionModel: ObservableObject {
         feedbackMode = feedbackMode == .append ? .revise : .append
     }
 
+    /// 导出当前会话快照
+    func snapshot(lastPastedText: String?) -> SessionSnapshot {
+        SessionSnapshot(
+            phase: phase, feedbackMode: feedbackMode, draft: draft,
+            feedback: feedback, currentResult: currentResult, statusText: statusText,
+            versions: versions, shownVersion: shownVersion, messages: messages,
+            activePreset: activePreset, hasAutoPasted: hasAutoPasted,
+            sessionID: sessionID, lastPastedText: lastPastedText
+        )
+    }
+
+    /// 恢复某个输入框的会话
+    func restore(_ snapshot: SessionSnapshot) {
+        stopDictation()
+        task?.cancel()
+        task = nil
+        isLoading = false
+        phase = snapshot.phase
+        feedbackMode = snapshot.feedbackMode
+        draft = snapshot.draft
+        feedback = snapshot.feedback
+        currentResult = snapshot.currentResult
+        statusText = snapshot.statusText
+        errorMessage = nil
+        versions = snapshot.versions
+        shownVersion = snapshot.shownVersion
+        messages = snapshot.messages
+        activePreset = snapshot.activePreset
+        hasAutoPasted = snapshot.hasAutoPasted
+        sessionID = snapshot.sessionID
+        showDiff = false
+        autoPresetNote = nil
+        bumpFocus()
+    }
+
+    /// 会话是否有值得保留的内容
+    var hasContent: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !versions.isEmpty
+    }
+
     /// ⌘N 重新开始
     func resetSession() {
         stopDictation()
@@ -401,6 +474,7 @@ final class SessionModel: ObservableObject {
         activePreset = PromptPreset(
             rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
         bumpFocus()
+        onSessionReset?()
     }
 
     func copyOriginal() {
