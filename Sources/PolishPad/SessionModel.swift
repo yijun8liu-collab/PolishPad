@@ -26,7 +26,7 @@ final class SessionModel: ObservableObject {
     }
 
     enum FeedbackMode {
-        case append   // 追加：输入的是新内容，优化后并入全文（默认）
+        case append   // 追加：输入的是新内容，优化后直接插入光标处（默认）
         case revise   // 修改：输入的是对当前版本的修改意见
     }
 
@@ -167,6 +167,7 @@ final class SessionModel: ObservableObject {
             ChatMessage(role: "system", content: systemContent(config)),
             ChatMessage(role: "user", content: "<input>\n\(currentResult)\n</input>"),
         ]
+        pendingRoundTag = nil
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -202,6 +203,7 @@ final class SessionModel: ObservableObject {
             ChatMessage(role: "system", content: systemContent(config)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
+        pendingRoundTag = nil
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -255,8 +257,9 @@ final class SessionModel: ObservableObject {
             return
         }
         // 以输入框里的实际内容为准：用户手动删改过时，把对话基线和
-        // 替换基线都对齐到编辑后的版本——AI 尊重用户编辑，替换不再重复
-        if hasAutoPasted,
+        // 替换基线都对齐到编辑后的版本——AI 尊重用户编辑，替换不再重复。
+        // 只在「修改」轮次做：追加轮次不替换任何内容，吸附反而会污染基线
+        if tag == "feedback", hasAutoPasted,
            let fieldText = fieldContentProvider?()?
                .trimmingCharacters(in: .whitespacesAndNewlines),
            !fieldText.isEmpty, fieldText != currentResult,
@@ -278,6 +281,7 @@ final class SessionModel: ObservableObject {
         let requestMessages = base + [
             ChatMessage(role: "user", content: "<\(tag)>\n\(note)\n</\(tag)>")
         ]
+        pendingRoundTag = tag
         run(requestMessages: requestMessages, config: config)
     }
 
@@ -321,6 +325,10 @@ final class SessionModel: ObservableObject {
     /// 本轮开始前的结果长度，用于疑似截断检测（流式期间 currentResult 已被覆盖）
     private var previousResultLength = 0
 
+    /// 本轮请求的标签（append/feedback/nil=首轮）。追加轮次只输出新增段：
+    /// 粘贴时不替换旧内容，直接插入光标处
+    private var pendingRoundTag: String?
+
     private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
         let previousLength = previousResultLength
         versions.append(output)
@@ -328,9 +336,11 @@ final class SessionModel: ObservableObject {
         messages = requestMessages + [ChatMessage(role: "assistant", content: output)]
         currentResult = output
 
-        // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）
+        // 疑似不完整输出检测：新版明显短于上一版时提醒（不拦截）。
+        // 追加轮次只输出新增段，天然比全文短，不适用
         var warning = ""
-        if version > 1, output.count * 10 < previousLength * 3 {
+        if version > 1, pendingRoundTag != "append",
+           output.count * 10 < previousLength * 3 {
             warning = t("（比上一版短很多，请检查是否完整）",
                         " (much shorter than the last version — check completeness)")
         }
@@ -348,8 +358,9 @@ final class SessionModel: ObservableObject {
         )
 
         if ConfigStore.loadRaw()?.autoPaste ?? true {
-            // 极速模式：出结果直接贴回原应用；纠偏轮次先删除上一版再贴
-            let replacePrevious = hasAutoPasted
+            // 极速模式：出结果直接贴回原应用。「修改」轮次先删除上一版再贴；
+            // 「追加」轮次只输出了新增段，不删除任何内容，直接插入光标处
+            let replacePrevious = hasAutoPasted && pendingRoundTag != "append"
             hasAutoPasted = true
             onAutoPaste?(replacePrevious)
         } else {
@@ -468,6 +479,7 @@ final class SessionModel: ObservableObject {
         showDiff = false
         messages = []
         hasAutoPasted = false
+        pendingRoundTag = nil
         sessionID = UUID()
         autoPresetNote = nil
         pasteTargetNote = nil

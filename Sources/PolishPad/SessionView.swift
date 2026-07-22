@@ -255,8 +255,8 @@ struct SessionView: View {
 
     private var feedbackPlaceholder: String {
         model.feedbackMode == .append
-            ? model.t("补充新内容，优化后并入上文；回车完成…",
-                      "Add new content to merge in; Enter to finish…")
+            ? model.t("补充新内容，优化后插入光标处；回车完成…",
+                      "Add new content to insert at the cursor; Enter to finish…")
             : model.t("说怎么改；回车完成…", "Describe changes; Enter to finish…")
     }
 
@@ -268,8 +268,8 @@ struct SessionView: View {
         }
         .padding(2)
         .background(Capsule().fill(Color.primary.opacity(0.06)))
-        .help(model.t("追加 = 输入新内容并入全文；修改 = 对当前版本提意见（⇥ 切换）",
-                      "Add = merge new content; Edit = revise current version (⇥ toggles)"))
+        .help(model.t("追加 = 新内容优化后插入光标处；修改 = 对上一段结果提意见（⇥ 切换）",
+                      "Add = polished new content inserted at the cursor; Edit = revise the last result (⇥ toggles)"))
     }
 
     private func feedbackModeOption(_ label: String, _ mode: SessionModel.FeedbackMode) -> some View {
