@@ -65,6 +65,8 @@ All fields except `hotkey` are re-read on every request — changes take effect 
 8. **Voice input**: press `⌘D` or click the mic button to start/stop dictation; recognized text streams into the active input box in real time and long pauses don't lose earlier content. First use requests microphone and speech recognition permissions; uses macOS native recognition — with on-device support your voice never leaves the Mac
 9. Don't want auto-paste? Replaced the wrong thing? Menu bar ✨ → **Restore last replacement** undoes it; the **History** submenu keeps the last 20 sessions with every version. Set `autoPaste` to `false` in the config to return to clipboard-only mode
 
+While the panel is open, **clicking into any other text field switches the paste target** (the bottom bar shows "Paste target: App") without touching the session context; each field remembers what was pasted into it — new fields get an insert, returning to an old field restores in-place replacement. The target freezes at submit time while a request is in flight.
+
 Every summon starts a fresh session — closing the panel ends the previous conversation. While the panel is open, `⌘N` clears and restarts manually.
 
 ## Refine in place (no panel)

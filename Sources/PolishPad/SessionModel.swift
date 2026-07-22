@@ -56,8 +56,9 @@ final class SessionModel: ObservableObject {
     var onRequestCloseAndPaste: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
     var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
-    /// 本会话是否已经自动粘贴过（决定下次是否先删除）
-    private var hasAutoPasted = false
+    /// 当前粘贴目标里是否已经贴过本会话内容（决定替换/插入与空 Enter 语义；
+    /// 目标切换时由 PanelController 按逐目标记忆更新）
+    var hasAutoPasted = false
 
     init() {
         speech.onStateChange = { [weak self] recording in

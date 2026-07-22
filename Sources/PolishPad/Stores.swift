@@ -164,13 +164,19 @@ final class ReplacementUndo {
     /// 被我们删掉的旧文本；nil 表示首次插入（还原 = 仅删除）
     private(set) var replacedText: String?
     private(set) var targetApp: NSRunningApplication?
+    /// 贴入的具体输入框元素：还原前精确恢复焦点，避免退格打错地方
+    private(set) var targetElement: FocusTracker.Target?
 
     var canRestore: Bool { !(pastedText ?? "").isEmpty }
 
-    func record(pasted: String?, replaced: String?, app: NSRunningApplication?) {
+    func record(
+        pasted: String?, replaced: String?,
+        app: NSRunningApplication?, target: FocusTracker.Target? = nil
+    ) {
         pastedText = pasted
         replacedText = replaced
         targetApp = app
+        targetElement = target
     }
 
     /// 激活目标应用 → 退格删除上次粘贴 → 贴回被替换的原文
@@ -199,6 +205,15 @@ final class ReplacementUndo {
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
 
+        // 元素级校验：回不到当初贴入的输入框就不动键盘
+        if targetElement != nil {
+            guard await FocusTracker.ensureFocus(targetElement) else {
+                HUD.shared.flashSuccess(UILang.t("原输入框不可用，已取消还原",
+                                                 "Original field unavailable — restore cancelled"))
+                return false
+            }
+        }
+
         HUD.shared.showWorking(UILang.t("还原中…", "Restoring…"))
         await KeySimulator.postBackspaces(pasted.count)
 
@@ -217,6 +232,7 @@ final class ReplacementUndo {
         pastedText = nil
         replacedText = nil
         targetApp = nil
+        targetElement = nil
         return true
     }
 }

@@ -16,6 +16,8 @@ final class PanelController {
     private var focusTarget: FocusTracker.Target?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
     private var lastPastedText: String?
+    /// 面板打开期间轮询焦点：用户点进新输入框时切换粘贴目标
+    private var focusPollTimer: Timer?
 
     init() {
         panel = KeyablePanel(
@@ -47,6 +49,7 @@ final class PanelController {
 
     var isVisible: Bool { panel.isVisible }
 
+
     func toggle() {
         if panel.isVisible {
             hide()
@@ -59,6 +62,7 @@ final class PanelController {
         // 每次唤起都是全新会话（关窗即结束上一次对话）
         model.resetSession()
         lastPastedText = nil
+        pasteMemory = []
         previousApp = NSWorkspace.shared.frontmostApplication
         focusTarget = FocusTracker.captureFocused()
         // 唤起时不在输入框：明示"完成后仅复制"，避免结果盲贴进错误位置
@@ -89,9 +93,65 @@ final class PanelController {
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
+        startFocusTracking()
+    }
+
+    /// 本会话内"哪个输入框贴过什么"的记忆：切回旧框恢复替换语义，防止重复文本
+    private var pasteMemory: [(target: FocusTracker.Target, pasted: String)] = []
+
+    /// 面板打开期间跟踪焦点：用户点进别的输入框 = 切换粘贴目标
+    private func startFocusTracking() {
+        focusPollTimer?.invalidate()
+        focusPollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollFocusedTarget() }
+        }
+    }
+
+    private func stopFocusTracking() {
+        focusPollTimer?.invalidate()
+        focusPollTimer = nil
+    }
+
+    private func pollFocusedTarget() {
+        guard panel.isVisible else { return }
+        // 请求进行中冻结目标：本轮贴到提交时的输入框
+        guard !model.isLoading else { return }
+        guard let now = FocusTracker.captureFocused() else { return }
+        // 面板自身的编辑框不算目标
+        guard now.pid != ProcessInfo.processInfo.processIdentifier else { return }
+        // 只认有效输入框：点到桌面/按钮/菜单/密码框不切换、不丢失原目标
+        guard FocusTracker.isTextLike(now) else { return }
+        if let current = focusTarget, FocusTracker.sameTarget(current, now) { return }
+
+        // 切换粘贴目标（会话上下文不动，只改结果去向）
+        focusTarget = now
+        let app = NSRunningApplication(processIdentifier: now.pid)
+        previousApp = app
+        // 恢复该输入框的粘贴记忆：贴过 → 替换语义；没贴过 → 插入语义
+        if let memory = pasteMemory.first(where: { FocusTracker.sameTarget($0.target, now) }) {
+            lastPastedText = memory.pasted
+            model.hasAutoPasted = true
+        } else {
+            lastPastedText = nil
+            model.hasAutoPasted = false
+        }
+        model.pasteTargetNote = model.t(
+            "粘贴目标：\(app?.localizedName ?? "新输入框")",
+            "Paste target: \(app?.localizedName ?? "new field")")
+    }
+
+    /// 记录/更新"当前目标贴了什么"
+    private func rememberPaste(_ text: String?) {
+        guard let text, let target = focusTarget else { return }
+        if let index = pasteMemory.firstIndex(where: { FocusTracker.sameTarget($0.target, target) }) {
+            pasteMemory[index] = (target, text)
+        } else {
+            pasteMemory.append((target, text))
+        }
     }
 
     func hide() {
+        stopFocusTracking()
         model.stopDictation()
         panel.orderOut(nil)
         // 焦点还给唤起前的应用，方便直接 ⌘V
@@ -143,8 +203,10 @@ final class PanelController {
                 await self.deletePreviousPasteIfNeeded(replacePrevious)
                 KeySimulator.postCommandKey(KeySimulator.keyV)
                 self.lastPastedText = NSPasteboard.general.string(forType: .string)
+                self.rememberPaste(self.lastPastedText)
                 ReplacementUndo.shared.record(
-                    pasted: self.lastPastedText, replaced: replacedOld, app: app)
+                    pasted: self.lastPastedText, replaced: replacedOld,
+                    app: app, target: self.focusTarget)
                 HUD.shared.flashSuccess(replacePrevious
                     ? UILang.t("已替换", "Replaced")
                     : UILang.t("已粘贴", "Pasted"))
@@ -218,7 +280,8 @@ final class PanelController {
             KeySimulator.postCommandKey(KeySimulator.keyV)
             self.lastPastedText = NSPasteboard.general.string(forType: .string)
             ReplacementUndo.shared.record(
-                pasted: self.lastPastedText, replaced: replacedOld, app: app)
+                pasted: self.lastPastedText, replaced: replacedOld,
+                app: app, target: self.focusTarget)
             HUD.shared.flashSuccess(replacePrevious
                 ? UILang.t("已替换", "Replaced")
                 : UILang.t("已粘贴", "Pasted"))

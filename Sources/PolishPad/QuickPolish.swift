@@ -196,7 +196,8 @@ final class QuickPolishController {
                 return
             }
             KeySimulator.postCommandKey(KeySimulator.keyV)
-            ReplacementUndo.shared.record(pasted: output, replaced: input, app: targetApp)
+            ReplacementUndo.shared.record(
+                pasted: output, replaced: input, app: targetApp, target: focusTarget)
             // 等目标应用完成粘贴后，恢复用户原来的剪贴板
             try? await Task.sleep(nanoseconds: 600_000_000)
             snapshot.restore()
