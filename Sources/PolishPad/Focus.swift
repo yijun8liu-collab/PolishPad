@@ -231,29 +231,127 @@ enum FocusTracker {
         guard status == .success, let value = valueRef as? String else {
             return .backspaces // 值不可读（终端等）：退格是唯一手段
         }
-        guard let range = value.range(of: text, options: .backwards) else {
-            return .insertOnly // 旧文本已被用户改掉：绝不乱删
-        }
-        // 尝试把旧文本精确选中，⌘V 替换选区
-        let utf16 = value.utf16
-        if let lower = range.lowerBound.samePosition(in: utf16) {
-            let location = utf16.distance(from: utf16.startIndex, to: lower)
-            var cfRange = CFRange(location: location, length: text.utf16.count)
-            if let axRange = AXValueCreate(.cfRange, &cfRange),
-               AXUIElementSetAttributeValue(
-                   target.element, kAXSelectedTextRangeAttribute as CFString,
-                   axRange) == .success {
-                var selectedRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(
-                    target.element, kAXSelectedTextAttribute as CFString,
-                    &selectedRef) == .success,
-                    (selectedRef as? String) == text {
+        // 1) 精确子串匹配
+        if let range = value.range(of: text, options: .backwards) {
+            let utf16 = value.utf16
+            if let lower = range.lowerBound.samePosition(in: utf16) {
+                let location = utf16.distance(from: utf16.startIndex, to: lower)
+                let cfRange = CFRange(location: location, length: text.utf16.count)
+                if selectAndVerify(cfRange, expecting: text,
+                                   in: target.element, value: value) {
                     return .selected
                 }
             }
+            // 选不中：只有旧文本恰好在值末尾时，末尾退格才是安全的
+            return value.hasSuffix(text) ? .backspaces : .insertOnly
         }
-        // 选不中：只有旧文本恰好在值末尾时，末尾退格才是安全的
-        return value.hasSuffix(text) ? .backspaces : .insertOnly
+        // 2) 空白容错匹配：Slack 等富文本框会改写空白/换行（\n\n → \n 等），
+        //    精确匹配失败时按非空白词块序列定位，选中 value 中的真实范围
+        if let cfRange = fuzzyRange(of: text, in: value),
+           selectAndVerify(cfRange, expecting: text,
+                           in: target.element, value: value) {
+            Diag.log("REPLACE fuzzy match at \(cfRange.location) len=\(cfRange.length)")
+            return .selected
+        }
+        Diag.log("REPLACE no match value=\(value.count)ch text=\(text.count)ch")
+        return .insertOnly // 旧文本已被用户改掉：绝不乱删
+    }
+
+    /// 选中 range 并核实选中的确实是目标文本（词块归一比较，容忍空白差异；
+    /// 应用不支持读选中文本时改为读回选区位置核实）。
+    /// 核实失败时把选区收拢回末尾——选区已被动过，不收回 ⌘V 会误吃错误选区
+    private static func selectAndVerify(
+        _ range: CFRange, expecting text: String,
+        in element: AXUIElement, value: String
+    ) -> Bool {
+        var cfRange = range
+        guard let axRange = AXValueCreate(.cfRange, &cfRange),
+              AXUIElementSetAttributeValue(
+                  element, kAXSelectedTextRangeAttribute as CFString,
+                  axRange) == .success else { return false }
+        var selectedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element, kAXSelectedTextAttribute as CFString,
+            &selectedRef) == .success, let selected = selectedRef as? String {
+            if selected == text || canonicalWords(selected) == canonicalWords(text) {
+                return true
+            }
+        } else {
+            var rangeRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                element, kAXSelectedTextRangeAttribute as CFString,
+                &rangeRef) == .success, let rangeRef,
+                CFGetTypeID(rangeRef) == AXValueGetTypeID() {
+                var readBack = CFRange()
+                if AXValueGetValue(rangeRef as! AXValue, .cfRange, &readBack),
+                   readBack.location == range.location,
+                   readBack.length == range.length {
+                    return true
+                }
+            }
+        }
+        var endRange = CFRange(location: value.utf16.count, length: 0)
+        if let collapse = AXValueCreate(.cfRange, &endRange) {
+            AXUIElementSetAttributeValue(
+                element, kAXSelectedTextRangeAttribute as CFString, collapse)
+        }
+        return false
+    }
+
+    /// 零宽字符：不参与词块内容比较
+    private static let ignorableChars: Set<Character> = [
+        "\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}",
+    ]
+
+    /// 按空白切词，记录每个词块在原文中的 UTF-16 起止位置
+    private static func wordChunks(
+        _ s: String
+    ) -> [(norm: String, start: Int, end: Int)] {
+        var result: [(norm: String, start: Int, end: Int)] = []
+        var norm = ""
+        var start = 0
+        var offset = 0
+        for ch in s {
+            let width = String(ch).utf16.count
+            if ch.isWhitespace {
+                if !norm.isEmpty {
+                    result.append((norm, start, offset))
+                    norm = ""
+                }
+            } else if !ignorableChars.contains(ch) {
+                if norm.isEmpty { start = offset }
+                norm.append(ch)
+            }
+            offset += width
+        }
+        if !norm.isEmpty { result.append((norm, start, offset)) }
+        return result
+    }
+
+    private static func canonicalWords(_ s: String) -> String {
+        wordChunks(s).map(\.norm).joined(separator: " ")
+    }
+
+    /// 空白容错定位：按词块序列从后往前找 text 在 value 中的 UTF-16 范围
+    private static func fuzzyRange(of text: String, in value: String) -> CFRange? {
+        let needle = wordChunks(text).map(\.norm)
+        let hay = wordChunks(value)
+        guard !needle.isEmpty, hay.count >= needle.count else { return nil }
+        var i = hay.count - needle.count
+        while i >= 0 {
+            var matched = true
+            for j in 0..<needle.count where hay[i + j].norm != needle[j] {
+                matched = false
+                break
+            }
+            if matched {
+                let start = hay[i].start
+                let end = hay[i + needle.count - 1].end
+                return CFRange(location: start, length: end - start)
+            }
+            i -= 1
+        }
+        return nil
     }
 
     /// avoidRect：面板的屏幕区域（AX 顶左坐标系）——补点击绝不能点到面板自己
