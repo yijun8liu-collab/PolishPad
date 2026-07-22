@@ -16,6 +16,7 @@ struct SessionSnapshot {
     var hasAutoPasted: Bool
     var sessionID: UUID
     var lastPastedText: String?
+    var hasAppendedSegments = false
 }
 
 @MainActor
@@ -258,8 +259,9 @@ final class SessionModel: ObservableObject {
         }
         // 以输入框里的实际内容为准：用户手动删改过时，把对话基线和
         // 替换基线都对齐到编辑后的版本——AI 尊重用户编辑，替换不再重复。
-        // 只在「修改」轮次做：追加轮次不替换任何内容，吸附反而会污染基线
-        if tag == "feedback", hasAutoPasted,
+        // 只在「修改」轮次做，且会话从未追加过（追加后输入框是多段拼合，
+        // 吸附会把全文误当成上一段结果，修改时把整个输入框替换掉）
+        if tag == "feedback", !hasAppendedSegments, hasAutoPasted,
            let fieldText = fieldContentProvider?()?
                .trimmingCharacters(in: .whitespacesAndNewlines),
            !fieldText.isEmpty, fieldText != currentResult,
@@ -329,6 +331,10 @@ final class SessionModel: ObservableObject {
     /// 粘贴时不替换旧内容，直接插入光标处
     private var pendingRoundTag: String?
 
+    /// 会话中出现过追加轮次：输入框内容 = 多段拼合，不再等于"上一版结果"，
+    /// 整体吸附（把输入框全文当基线）从此失效且危险，必须禁用
+    private var hasAppendedSegments = false
+
     private func handleSuccess(output: String, requestMessages: [ChatMessage]) {
         let previousLength = previousResultLength
         versions.append(output)
@@ -362,6 +368,7 @@ final class SessionModel: ObservableObject {
             // 「追加」轮次只输出了新增段，不删除任何内容，直接插入光标处
             let replacePrevious = hasAutoPasted && pendingRoundTag != "append"
             hasAutoPasted = true
+            if pendingRoundTag == "append" { hasAppendedSegments = true }
             onAutoPaste?(replacePrevious)
         } else {
             bumpFocus()
@@ -428,7 +435,8 @@ final class SessionModel: ObservableObject {
             feedback: feedback, currentResult: currentResult, statusText: statusText,
             versions: versions, shownVersion: shownVersion, messages: messages,
             activePreset: activePreset, hasAutoPasted: hasAutoPasted,
-            sessionID: sessionID, lastPastedText: lastPastedText
+            sessionID: sessionID, lastPastedText: lastPastedText,
+            hasAppendedSegments: hasAppendedSegments
         )
     }
 
@@ -450,6 +458,7 @@ final class SessionModel: ObservableObject {
         messages = snapshot.messages
         activePreset = snapshot.activePreset
         hasAutoPasted = snapshot.hasAutoPasted
+        hasAppendedSegments = snapshot.hasAppendedSegments
         sessionID = snapshot.sessionID
         showDiff = false
         autoPresetNote = nil
@@ -480,6 +489,7 @@ final class SessionModel: ObservableObject {
         messages = []
         hasAutoPasted = false
         pendingRoundTag = nil
+        hasAppendedSegments = false
         sessionID = UUID()
         autoPresetNote = nil
         pasteTargetNote = nil
