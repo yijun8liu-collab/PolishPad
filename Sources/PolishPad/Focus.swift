@@ -154,7 +154,8 @@ enum FocusTracker {
     /// - 目标是明确的非文本控件（按钮/图标等）：拒绝，调用方走"仅复制"
     /// - 目标是输入框：精确恢复；恢复不了但当前焦点合理（文本框/容器）也放行，
     ///   只有当前焦点明确落在非文本控件上才拒绝
-    static func ensureFocus(_ target: Target?) async -> Bool {
+    /// avoidRect：面板的屏幕区域（AX 顶左坐标系）——补点击绝不能点到面板自己
+    static func ensureFocus(_ target: Target?, avoiding avoidRect: CGRect? = nil) async -> Bool {
         guard let target else { return true }
         switch kind(of: target) {
         case .control:
@@ -168,27 +169,24 @@ enum FocusTracker {
             target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        // 验证元素是否真的持有焦点。很多网页在浏览器失活时会 blur 输入框，
-        // 而对 web 元素设 AXFocused 常被 Chromium 忽略——此时像人一样
-        // 真实点击一次输入框（实时坐标），再 ⌘↓ 把光标移到末尾
-        var focusedValue: CFTypeRef?
-        let holdsFocus = AXUIElementCopyAttributeValue(
-            target.element, kAXFocusedAttribute as CFString, &focusedValue) == .success
-            && ((focusedValue as? Bool) ?? false)
-        if !holdsFocus {
-            let liveFrame = frameOf(target.element)
-            if liveFrame.width > 2, liveFrame.height > 2 {
-                await MainActor.run {
-                    KeySimulator.postClick(
-                        at: CGPoint(x: liveFrame.midX, y: liveFrame.midY))
-                }
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                await MainActor.run {
-                    KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾
-                }
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                return true
+        // Chromium 的 AXFocused 读数与真实 DOM 焦点不是一回事（实测会谎报 true），
+        // 网页还常在浏览器失活时 blur 输入框——所以对输入框目标一律像人一样
+        // 真实点击一次（实时坐标），再 ⌘↓ 把光标移到末尾，然后才允许粘贴
+        let liveFrame = frameOf(target.element)
+        let center = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
+        let overlapsPanel = avoidRect?.contains(center) ?? false
+        Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height)) overlapsPanel=\(overlapsPanel)")
+        if liveFrame.width > 2, liveFrame.height > 2, !overlapsPanel {
+            await MainActor.run {
+                KeySimulator.postClick(at: center)
             }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await MainActor.run {
+                KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            Diag.log("ENSURE force-clicked")
+            return true
         }
 
         guard let now = captureFocused() else { return true }

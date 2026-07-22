@@ -52,6 +52,7 @@ final class PanelController {
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                 as? NSRunningApplication,
                 app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            Diag.log("ACTIVATE \(app.bundleIdentifier ?? "?")")
             Task { @MainActor in self?.lastExternalApp = app }
         }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
@@ -82,6 +83,7 @@ final class PanelController {
         // AX 捕获放后台（Chromium 慢 AX 会卡住面板弹出），完成后回填
         Task.detached(priority: .userInitiated) { [weak self] in
             let captured = FocusTracker.captureFocused()
+            Diag.log("SHOW captured role=\(captured?.role ?? "nil") pid=\(captured?.pid ?? 0)")
             await MainActor.run {
                 guard let self else { return }
                 self.focusTarget = captured
@@ -183,8 +185,9 @@ final class PanelController {
             // 恰好撞上容器态——重试直到问到真正的输入框（API 等待期内完成）
             var found: FocusTracker.Target?
             for attempt in 0..<4 {
-                if let captured = FocusTracker.focusedElement(inAppWithPID: pid),
-                   FocusTracker.isTextLike(captured) {
+                let captured = FocusTracker.focusedElement(inAppWithPID: pid)
+                Diag.log("REFRESH try\(attempt) pid=\(pid) role=\(captured?.role ?? "nil") textLike=\(FocusTracker.isTextLike(captured))")
+                if let captured, FocusTracker.isTextLike(captured) {
                     found = captured
                     break
                 }
@@ -192,7 +195,10 @@ final class PanelController {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                 }
             }
-            guard let now = found else { return }
+            guard let now = found else {
+                Diag.log("REFRESH giving up")
+                return
+            }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 if let current = self.focusTarget, FocusTracker.sameTarget(current, now) {
@@ -208,6 +214,7 @@ final class PanelController {
 
     /// 切换粘贴目标（会话上下文不动，只改结果去向）
     private func switchTarget(to now: FocusTracker.Target) {
+        Diag.log("SWITCH to role=\(now.role) pid=\(now.pid) frame=\(Int(now.frame.minX)),\(Int(now.frame.minY)),\(Int(now.frame.width))x\(Int(now.frame.height))")
         focusTarget = now
         let app = NSRunningApplication(processIdentifier: now.pid)
         previousApp = app
@@ -222,6 +229,18 @@ final class PanelController {
         model.pasteTargetNote = model.t(
             "粘贴目标：\(app?.localizedName ?? "新输入框")",
             "Paste target: \(app?.localizedName ?? "new field")")
+    }
+
+    /// 面板的屏幕区域（AX 顶左坐标系），补点击避让用
+    private func panelAXFrame() -> CGRect? {
+        guard panel.isVisible, let primary = NSScreen.screens.first else { return nil }
+        let frame = panel.frame
+        return CGRect(
+            x: frame.minX,
+            y: primary.frame.maxY - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
     }
 
     /// 记录/更新"当前目标贴了什么"
@@ -270,10 +289,14 @@ final class PanelController {
                 }
                 app.activate()
             }
+            Diag.log("PASTE app=\(app.bundleIdentifier ?? "?") activated=\(activated) replace=\(replacePrevious) targetRole=\(self.focusTarget?.role ?? "nil")")
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 // 精确恢复到唤起时的输入框；恢复不了就不盲贴
-                guard await FocusTracker.ensureFocus(self.focusTarget) else {
+                let ok = await FocusTracker.ensureFocus(
+                    self.focusTarget, avoiding: self.panelAXFrame())
+                Diag.log("PASTE ensureFocus=\(ok)")
+                guard ok else {
                     self.model.statusText = self.model.t(
                         "✅ 已复制（未检测到可用输入框，请手动粘贴）",
                         "✅ Copied (no usable text field — paste manually)")
