@@ -167,6 +167,30 @@ enum FocusTracker {
         AXUIElementSetAttributeValue(
             target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         try? await Task.sleep(nanoseconds: 150_000_000)
+
+        // 验证元素是否真的持有焦点。很多网页在浏览器失活时会 blur 输入框，
+        // 而对 web 元素设 AXFocused 常被 Chromium 忽略——此时像人一样
+        // 真实点击一次输入框（实时坐标），再 ⌘↓ 把光标移到末尾
+        var focusedValue: CFTypeRef?
+        let holdsFocus = AXUIElementCopyAttributeValue(
+            target.element, kAXFocusedAttribute as CFString, &focusedValue) == .success
+            && ((focusedValue as? Bool) ?? false)
+        if !holdsFocus {
+            let liveFrame = frameOf(target.element)
+            if liveFrame.width > 2, liveFrame.height > 2 {
+                await MainActor.run {
+                    KeySimulator.postClick(
+                        at: CGPoint(x: liveFrame.midX, y: liveFrame.midY))
+                }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await MainActor.run {
+                    KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾
+                }
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                return true
+            }
+        }
+
         guard let now = captureFocused() else { return true }
         if sameTarget(now, target) { return true }
         return kind(of: now) != .control

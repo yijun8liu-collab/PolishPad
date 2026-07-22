@@ -32,6 +32,15 @@ enum KeySimulator {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    /// 在屏幕坐标发一次真实左键点击
+    static func postClick(at point: CGPoint) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
+                mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: source, mouseType: .leftMouseUp,
+                mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
     static func postCommandKey(_ keyCode: CGKeyCode) {
         let source = CGEventSource(stateID: .combinedSessionState)
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
