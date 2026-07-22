@@ -113,6 +113,10 @@ enum KeychainStore {
         SecItemAdd(query as CFDictionary, nil)
     }
 
+    /// 每次启动最多"认领"一次：读取成功后重写条目，让当前构建成为创建者。
+    /// 创建者读取免授权弹窗——应用更新后只需授权一次，之后永久静默
+    nonisolated(unsafe) private static var reowned = false
+
     static func get(account: String = "apiKey") -> String? {
         cacheLock.lock()
         if let cached = cache[account] {
@@ -134,7 +138,12 @@ enum KeychainStore {
               let value = String(data: data, encoding: .utf8) else { return nil }
         cacheLock.lock()
         cache[account] = value
+        let shouldReown = !reowned && account == "apiKey"
+        if shouldReown { reowned = true }
         cacheLock.unlock()
+        if shouldReown {
+            set(value, account: account)
+        }
         return value
     }
 
