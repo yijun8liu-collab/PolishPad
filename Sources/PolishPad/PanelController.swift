@@ -367,17 +367,23 @@ final class PanelController {
             Diag.log("PASTE app=\(app.bundleIdentifier ?? "?") activated=\(activated) replace=\(replacePrevious) targetRole=\(self.focusTarget?.role ?? "nil")")
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                // 面板遮挡目标输入框时先让位（贴完会自动回来），否则补点击无法执行
+                // 面板遮挡目标输入框时临时开启点击穿透：补点击直接穿过
+                // 面板落到下面的输入框，面板不隐藏、不闪烁（贴完恢复）
+                var clickThrough = false
                 if let target = self.focusTarget,
                    let panelFrame = self.panelAXFrame(),
                    panelFrame.intersects(FocusTracker.liveFrame(of: target)) {
-                    Diag.log("PASTE panel overlaps target, hiding panel temporarily")
-                    self.panel.orderOut(nil)
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    Diag.log("PASTE panel overlaps target, click-through mode")
+                    self.panel.ignoresMouseEvents = true
+                    clickThrough = true
+                }
+                defer {
+                    if clickThrough {
+                        self.panel.ignoresMouseEvents = false
+                    }
                 }
                 // 精确恢复到唤起时的输入框；恢复不了就不盲贴
-                let ok = await FocusTracker.ensureFocus(
-                    self.focusTarget, avoiding: self.panelAXFrame())
+                let ok = await FocusTracker.ensureFocus(self.focusTarget)
                 Diag.log("PASTE ensureFocus=\(ok)")
                 guard ok else {
                     self.model.statusText = self.model.t(

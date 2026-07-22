@@ -176,6 +176,20 @@ enum FocusTracker {
         })
     }
 
+    /// 某文本区间在屏幕上的位置（光标处的字符矩形；不可用返回 nil）
+    private static func boundsOfRange(
+        _ rangeValue: AXValue, in element: AXUIElement
+    ) -> CGRect? {
+        var boundsRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, kAXBoundsForRangeParameterizedAttribute as CFString,
+            rangeValue, &boundsRef) == .success,
+            let boundsRef, CFGetTypeID(boundsRef) == AXValueGetTypeID() else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(boundsRef as! AXValue, .cgRect, &rect) else { return nil }
+        return rect
+    }
+
     /// 目标输入框的光标位置（UTF-16 偏移，选区取末端；不可读返回 nil）
     static func caretLocation(of target: Target?) -> Int? {
         guard let target else { return nil }
@@ -257,23 +271,36 @@ enum FocusTracker {
             target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        // Chromium 的 AXFocused 读数与真实 DOM 焦点不是一回事（实测会谎报 true），
-        // 网页还常在浏览器失活时 blur 输入框——所以对输入框目标一律像人一样
-        // 真实点击一次（实时坐标），再 ⌘↓ 把光标移到末尾，然后才允许粘贴
+        // Chromium 的 AXFocused 读数不可信，网页还会在失活时 blur 输入框——
+        // 对输入框目标一律像人一样真实点击。点击位置优先取用户光标所在
+        // 字符的屏幕坐标：点击本身就落在用户的插入点上，不依赖选区恢复
         let liveFrame = frameOf(target.element)
-        let center = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
-        let overlapsPanel = avoidRect?.contains(center) ?? false
-        Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height)) overlapsPanel=\(overlapsPanel)")
-        if liveFrame.width > 2, liveFrame.height > 2, !overlapsPanel {
-            // 用户可能特意把光标放在了某个位置——点击前记住，点击后恢复
+        Diag.log("ENSURE liveFrame=\(Int(liveFrame.minX)),\(Int(liveFrame.minY)),\(Int(liveFrame.width))x\(Int(liveFrame.height))")
+        if liveFrame.width > 2, liveFrame.height > 2 {
             var savedRange: CFTypeRef?
             let hasSavedRange = AXUIElementCopyAttributeValue(
                 target.element, kAXSelectedTextRangeAttribute as CFString,
                 &savedRange) == .success
+                && savedRange != nil
+                && CFGetTypeID(savedRange!) == AXValueGetTypeID()
+
+            var clickPoint = CGPoint(x: liveFrame.midX, y: liveFrame.midY)
+            var clickedAtCaret = false
+            if hasSavedRange, let savedRange,
+               let caretRect = boundsOfRange(savedRange as! AXValue, in: target.element),
+               caretRect.height > 1,
+               liveFrame.insetBy(dx: -4, dy: -4).contains(
+                   CGPoint(x: caretRect.midX, y: caretRect.midY)) {
+                clickPoint = CGPoint(
+                    x: min(max(caretRect.midX, liveFrame.minX + 2), liveFrame.maxX - 2),
+                    y: min(max(caretRect.midY, liveFrame.minY + 2), liveFrame.maxY - 2))
+                clickedAtCaret = true
+            }
             await MainActor.run {
-                KeySimulator.postClick(at: center)
+                KeySimulator.postClick(at: clickPoint)
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
+
             var caretRestored = false
             if hasSavedRange, let savedRange,
                AXUIElementSetAttributeValue(
@@ -281,13 +308,14 @@ enum FocusTracker {
                    savedRange) == .success {
                 caretRestored = true
             }
-            if !caretRestored {
+            // 只有既没能点在光标位置、又恢复不了选区时，才退到末尾兜底
+            if !caretRestored, !clickedAtCaret {
                 await MainActor.run {
-                    KeySimulator.postCommandKey(125) // ⌘↓：光标到末尾（兜底）
+                    KeySimulator.postCommandKey(125)
                 }
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
-            Diag.log("ENSURE force-clicked caretRestored=\(caretRestored)")
+            Diag.log("ENSURE clicked atCaret=\(clickedAtCaret) restored=\(caretRestored)")
             return true
         }
 
