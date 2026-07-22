@@ -124,6 +124,7 @@ final class QuickPolishController {
     private func run(_ mode: Mode) async {
         onStateChange?(.working)
         let targetApp = NSWorkspace.shared.frontmostApplication
+        let focusTarget = FocusTracker.captureFocused()
         HUD.shared.showWorking(mode == .all
             ? UILang.t("全选优化中…", "Refining all…")
             : UILang.t("优化中…", "Refining…"))
@@ -171,8 +172,29 @@ final class QuickPolishController {
                     HUD.shared.updateWorking(UILang.t("优化中… \(count) 字", "Refining… \(count) chars"))
                 }
             }
+            // 等 API 的这几秒里用户可能切走了窗口：先确认目标应用和输入框
+            if let app = targetApp,
+               NSWorkspace.shared.frontmostApplication?.processIdentifier
+                   != app.processIdentifier {
+                app.activate()
+                for _ in 0..<20 {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                        == app.processIdentifier { break }
+                    app.activate()
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
             pasteboard.clearContents()
             pasteboard.setString(output, forType: .string)
+            guard await FocusTracker.ensureFocus(focusTarget) else {
+                // 回不到原输入框：结果留在剪贴板，绝不盲贴（不恢复快照）
+                onStateChange?(.idle)
+                HUD.shared.flashSuccess(UILang.t(
+                    "已复制（原输入框不可用，请手动粘贴）",
+                    "Copied (original field unavailable — paste manually)"))
+                return
+            }
             KeySimulator.postCommandKey(KeySimulator.keyV)
             ReplacementUndo.shared.record(pasted: output, replaced: input, app: targetApp)
             // 等目标应用完成粘贴后，恢复用户原来的剪贴板

@@ -337,6 +337,13 @@ struct SessionView: View {
                     .lineLimit(1)
             }
 
+            if let pasteNote = model.pasteTargetNote {
+                Text(pasteNote)
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.orange.opacity(0.85))
+                    .lineLimit(1)
+            }
+
             if model.isLoading {
                 ProgressView()
                     .controlSize(.mini)

@@ -28,6 +28,8 @@ final class SessionModel: ObservableObject {
     @Published var activePreset: PromptPreset = .polish
     /// 应用感知自动选择的提示（手动切换后清除）
     @Published var autoPresetNote: String?
+    /// 唤起时未检测到输入框的提示（此时完成后仅复制，不盲贴）
+    @Published var pasteTargetNote: String?
     /// 当前显示第几版（1-based）
     @Published var shownVersion = 0
     /// 改动对比视图开关
@@ -391,6 +393,7 @@ final class SessionModel: ObservableObject {
         hasAutoPasted = false
         sessionID = UUID()
         autoPresetNote = nil
+        pasteTargetNote = nil
         activePreset = PromptPreset(
             rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
         bumpFocus()

@@ -12,6 +12,8 @@ final class PanelController {
     let model = SessionModel()
     /// 唤起前的前台应用，关窗后把焦点还回去
     private var previousApp: NSRunningApplication?
+    /// 唤起时聚焦的具体输入框元素（粘贴前精确恢复焦点，防止盲贴）
+    private var focusTarget: FocusTracker.Target?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
     private var lastPastedText: String?
 
@@ -58,6 +60,13 @@ final class PanelController {
         model.resetSession()
         lastPastedText = nil
         previousApp = NSWorkspace.shared.frontmostApplication
+        focusTarget = FocusTracker.captureFocused()
+        // 唤起时不在输入框：明示"完成后仅复制"，避免结果盲贴进错误位置
+        if ConfigStore.loadRaw()?.autoPaste ?? true,
+           focusTarget != nil, !FocusTracker.isTextLike(focusTarget) {
+            model.pasteTargetNote = model.t("未检测到输入框 · 完成后仅复制",
+                                            "No text field · will copy only")
+        }
         // 应用感知：按唤起前的前台应用自动选场景
         model.applyAutoPreset(
             bundleID: previousApp?.bundleIdentifier,
@@ -119,6 +128,17 @@ final class PanelController {
             }
             if activated {
                 try? await Task.sleep(nanoseconds: 200_000_000)
+                // 精确恢复到唤起时的输入框；恢复不了就不盲贴
+                guard await FocusTracker.ensureFocus(self.focusTarget) else {
+                    self.model.statusText = self.model.t(
+                        "✅ 已复制（未检测到可用输入框，请手动粘贴）",
+                        "✅ Copied (no usable text field — paste manually)")
+                    HUD.shared.flashSuccess(UILang.t("已复制", "Copied"))
+                    self.panel.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                    self.model.bumpFocus()
+                    return
+                }
                 let replacedOld = replacePrevious ? self.lastPastedText : nil
                 await self.deletePreviousPasteIfNeeded(replacePrevious)
                 KeySimulator.postCommandKey(KeySimulator.keyV)
@@ -187,6 +207,12 @@ final class PanelController {
             }
             // 再留一点时间让焦点落回输入框
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard await FocusTracker.ensureFocus(self.focusTarget) else {
+                HUD.shared.flashSuccess(UILang.t(
+                    "已复制（未检测到可用输入框，请手动粘贴）",
+                    "Copied (no usable text field — paste manually)"))
+                return
+            }
             let replacedOld = replacePrevious ? self.lastPastedText : nil
             await self.deletePreviousPasteIfNeeded(replacePrevious)
             KeySimulator.postCommandKey(KeySimulator.keyV)
