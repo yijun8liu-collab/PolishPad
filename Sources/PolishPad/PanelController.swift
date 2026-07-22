@@ -64,12 +64,22 @@ final class PanelController {
         lastPastedText = nil
         pasteMemory = []
         previousApp = NSWorkspace.shared.frontmostApplication
-        focusTarget = FocusTracker.captureFocused()
-        // 唤起时不在输入框：明示"完成后仅复制"，避免结果盲贴进错误位置
-        if ConfigStore.loadRaw()?.autoPaste ?? true,
-           focusTarget != nil, !FocusTracker.isTextLike(focusTarget) {
-            model.pasteTargetNote = model.t("未检测到输入框 · 完成后仅复制",
-                                            "No text field · will copy only")
+        focusTarget = nil
+        // AX 捕获放后台（Chromium 慢 AX 会卡住面板弹出），完成后回填
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let captured = FocusTracker.captureFocused()
+            await MainActor.run {
+                guard let self else { return }
+                self.focusTarget = captured
+                // 唤起时焦点明确在非文本控件上：明示"完成后仅复制"。
+                // 容器类（Chromium 常态）不提示——应用级粘贴仍会正确路由
+                if ConfigStore.loadRaw()?.autoPaste ?? true,
+                   captured != nil, FocusTracker.kind(of: captured) == .control {
+                    self.model.pasteTargetNote = self.model.t(
+                        "未检测到输入框 · 完成后仅复制",
+                        "No text field · will copy only")
+                }
+            }
         }
         // 应用感知：按唤起前的前台应用自动选场景
         model.applyAutoPreset(
@@ -112,17 +122,39 @@ final class PanelController {
         focusPollTimer = nil
     }
 
+    /// 防重入：AX 采集可能比轮询间隔还慢
+    private var pollInFlight = false
+
     private func pollFocusedTarget() {
         guard panel.isVisible else { return }
         // 请求进行中冻结目标：本轮贴到提交时的输入框
-        guard !model.isLoading else { return }
-        guard let now = FocusTracker.captureFocused() else { return }
+        guard !model.isLoading, !pollInFlight else { return }
+        pollInFlight = true
+        // AX 采集放后台线程：慢应用的 AX 调用会逐个顶满超时，不能占主线程
+        Task.detached(priority: .utility) { [weak self] in
+            let captured = FocusTracker.captureFocused()
+            await MainActor.run {
+                self?.pollInFlight = false
+                self?.handlePolledTarget(captured)
+            }
+        }
+    }
+
+    private func handlePolledTarget(_ captured: FocusTracker.Target?) {
+        guard panel.isVisible, !model.isLoading else { return }
+        guard let now = captured else { return }
         // 面板自身的编辑框不算目标
         guard now.pid != ProcessInfo.processInfo.processIdentifier else { return }
         // 只认有效输入框：点到桌面/按钮/菜单/密码框不切换、不丢失原目标
         guard FocusTracker.isTextLike(now) else { return }
-        if let current = focusTarget, FocusTracker.sameTarget(current, now) { return }
-
+        if let current = focusTarget, FocusTracker.sameTarget(current, now) {
+            // 同一逻辑输入槽但元素对象已更换（web/Electron 重建 DOM）：刷新引用，
+            // 否则后续 ensureFocus 拿着失效元素操作
+            if !CFEqual(current.element, now.element) {
+                focusTarget = now
+            }
+            return
+        }
         // 切换粘贴目标（会话上下文不动，只改结果去向）
         focusTarget = now
         let app = NSRunningApplication(processIdentifier: now.pid)
