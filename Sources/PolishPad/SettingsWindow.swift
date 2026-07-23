@@ -145,6 +145,8 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    // menu 型 Picker 的选项文字有缓存，语言切换时按身份重建
+                    .id(uiEnglish)
                     Text(UILang.t(
                         (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionZH,
                         (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionEN
@@ -177,6 +179,7 @@ struct SettingsView: View {
                                 }
                             }
                             .labelsHidden()
+                            .id(uiEnglish)
                             .frame(width: 140)
                             Button {
                                 appRows.removeAll { $0.id == row.id }
