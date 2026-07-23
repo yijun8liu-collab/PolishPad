@@ -5,6 +5,7 @@ struct SessionView: View {
     @ObservedObject var model: SessionModel
 
     @State private var hoveringClose = false
+    @State private var skeletonPulse = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -120,15 +121,20 @@ struct SessionView: View {
             if model.showDiff {
                 diffView
                     .frame(maxHeight: .infinity)
+            } else if model.awaitingFirstChunk, model.currentResult.isEmpty {
+                skeletonView
+                    .frame(maxHeight: .infinity)
             } else {
                 SubmitTextEditor(
-                    text: $model.currentResult,
+                    text: streamingResultText,
                     isEditable: false,
                     fontSize: 14.5,
                     inset: NSSize(width: 16, height: 8),
                     onCancel: { model.handleEscape() }
                 )
                 .frame(maxHeight: .infinity)
+                // 纠偏轮等待首字时旧文变暗，示意"正在重写这段"
+                .opacity(model.awaitingFirstChunk ? 0.5 : 1)
             }
 
             Divider()
@@ -165,6 +171,33 @@ struct SessionView: View {
                 }
             }
         }
+    }
+
+    /// 流式期间在文字末尾跟一个插入符：token 间停顿时也能看出"还在写"
+    private var streamingResultText: Binding<String> {
+        model.isLoading && !model.awaitingFirstChunk
+            ? .constant(model.currentResult + " ▍")
+            : $model.currentResult
+    }
+
+    /// 首字到达前的骨架占位：三条脉动的灰条
+    private var skeletonView: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            ForEach([44, 140, 250], id: \.self) { trailing in
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.primary.opacity(0.09))
+                    .frame(height: 13)
+                    .padding(.trailing, CGFloat(trailing))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .opacity(skeletonPulse ? 0.45 : 1)
+        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true),
+                   value: skeletonPulse)
+        .onAppear { skeletonPulse = true }
+        .onDisappear { skeletonPulse = false }
     }
 
     private var statusRow: some View {

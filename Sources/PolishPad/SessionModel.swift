@@ -53,6 +53,8 @@ final class SessionModel: ObservableObject {
     @Published var shownVersion = 0
     /// 改动对比视图开关
     @Published var showDiff = false
+    /// 本轮已发出请求但首个流式块还没到（骨架占位/旧文变暗的依据）
+    @Published var awaitingFirstChunk = false
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet { UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish") }
@@ -283,9 +285,19 @@ final class SessionModel: ObservableObject {
 
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
+        awaitingFirstChunk = true
         errorMessage = nil
         showDiff = false
         statusText = t("优化中…（Esc 取消）", "Refining… (Esc to cancel)")
+        // 回车即切审阅态：骨架占位先出现，首字到达后无缝替换（不再干等）
+        if phase == .composing { phase = .reviewing }
+        // 慢网络安抚：首字 5 秒未到，明确告知仍在等待而不是卡死
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, self.isLoading, self.awaitingFirstChunk else { return }
+            self.statusText = self.t("网络较慢，仍在等待…（Esc 取消）",
+                                     "Slow network — still waiting… (Esc cancels)")
+        }
         // 流式期间结果区实时刷新；取消/失败时恢复本轮开始前的版本
         let resultBeforeRound = currentResult
         previousResultLength = currentResult.count
@@ -297,19 +309,20 @@ final class SessionModel: ObservableObject {
                 ) { [weak self] partial in
                     Task { @MainActor in
                         guard let self, self.isLoading else { return }
+                        self.awaitingFirstChunk = false
                         self.currentResult = partial
-                        if self.phase == .composing {
-                            self.phase = .reviewing  // 首轮：一有增量就切到结果视图
-                        }
                     }
                 }
                 guard !Task.isCancelled else { return }
+                self?.awaitingFirstChunk = false
                 self?.handleSuccess(output: output, requestMessages: requestMessages)
             } catch is CancellationError {
+                self?.awaitingFirstChunk = false
                 self?.currentResult = resultBeforeRound
                 if resultBeforeRound.isEmpty { self?.phase = .composing }
             } catch {
                 guard !Task.isCancelled else { return }
+                self?.awaitingFirstChunk = false
                 self?.currentResult = resultBeforeRound
                 if resultBeforeRound.isEmpty { self?.phase = .composing }
                 self?.handleFailure(error)
@@ -368,6 +381,7 @@ final class SessionModel: ObservableObject {
         task?.cancel()
         task = nil
         isLoading = false
+        awaitingFirstChunk = false
         statusText = version > 0
             ? t("已取消，剪贴板仍是 v\(version)", "Cancelled — clipboard still has v\(version)")
             : t("已取消", "Cancelled")
