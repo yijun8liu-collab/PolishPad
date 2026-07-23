@@ -52,6 +52,9 @@ final class SessionModel: ObservableObject {
     var onRequestClose: (() -> Void)?
     /// 关窗并自动粘贴回原应用
     var onRequestCloseAndPaste: (() -> Void)?
+    /// 已粘贴过的会话收工：由 PanelController 判断显示版本是否与已贴入
+    /// 版本一致——用户回退过版本时，先原地替换成当前显示版再关窗
+    var onCloseWithShownVersion: (() -> Void)?
     /// 优化成功即自动贴回；replacePrevious 为 true 时先删除上一次粘贴
     var onAutoPaste: ((_ replacePrevious: Bool) -> Void)?
     /// 本会话是否已经自动粘贴过（决定下次是否先删除）
@@ -193,9 +196,10 @@ final class SessionModel: ObservableObject {
             onRequestClose?()
             return
         }
-        // 极速模式下结果已经贴回去了，空 Enter 只需关窗
+        // 极速模式下结果已经贴回去了；但用户可能 ⌘[ 回退过版本——
+        // 收工前由控制器校准目标内容为当前显示的版本
         if hasAutoPasted {
-            onRequestClose?()
+            (onCloseWithShownVersion ?? onRequestClose)?()
             return
         }
         if ConfigStore.loadRaw()?.autoPaste ?? true {

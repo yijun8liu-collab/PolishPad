@@ -38,6 +38,17 @@ final class PanelController {
 
         model.onRequestClose = { [weak self] in self?.hide() }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
+        model.onCloseWithShownVersion = { [weak self] in
+            guard let self else { return }
+            if let pasted = self.lastPastedText, !pasted.isEmpty,
+               pasted != self.model.currentResult {
+                // 回退/前进过版本：目标里还是旧版，替换成当前显示的版本再关窗
+                self.model.copyResultAgain()
+                self.hideAndPaste(replacePrevious: true)
+            } else {
+                self.hide()
+            }
+        }
         model.onAutoPaste = { [weak self] replacePrevious in
             self?.pasteAndReturn(replacePrevious: replacePrevious)
         }
