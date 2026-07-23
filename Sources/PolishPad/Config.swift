@@ -53,7 +53,10 @@ enum PromptPreset: String, CaseIterable {
 struct CustomScenario: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
     var name: String
+    /// 中文（默认）提示词
     var prompt: String
+    /// EN 模式提示词；缺省时用中文版 + 自动附加英文输出要求
+    var promptEN: String? = nil
 }
 
 /// 会话场景标识：内置预设或用户自定义场景。
@@ -313,6 +316,13 @@ struct AppConfig: Codable {
     func resolvedSystemPrompt(english: Bool, scenario: Scenario?) -> String {
         if case let .user(id) = scenario,
            let custom = customScenarios?.first(where: { $0.id == id }) {
+            // EN 模式优先用英文版提示词；没有则中文版 + 附加英文输出要求
+            if english,
+               let promptEN = custom.promptEN?
+                   .trimmingCharacters(in: .whitespacesAndNewlines),
+               !promptEN.isEmpty {
+                return promptEN + glossaryBlock(english: true)
+            }
             let prompt = custom.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             if !prompt.isEmpty {
                 return Self.applyEnglishRequirement(prompt, english: english)

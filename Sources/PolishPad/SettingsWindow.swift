@@ -40,6 +40,8 @@ struct SettingsView: View {
     @State private var presetOverrides: [String: String] = [:]
     /// 用户自定义场景列表
     @State private var customScenarios: [CustomScenario] = []
+    /// 用户场景提示词编辑器当前语言页（false=中文）
+    @State private var scenarioPromptEN = false
     @State private var appRows: [AppMappingRow] = []
     @State private var glossaryText = ""
     @State private var updateStatus = ""
@@ -193,7 +195,7 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                         // menu 型 Picker 的选项文字有缓存，语言切换/增删场景时按身份重建
                         .id("\(uiEnglish)-\(customScenarios.count)")
-                        Button(UILang.t("✨ AI 生成…", "✨ AI generate…")) {
+                        Button(UILang.t("AI 生成…", "AI generate…")) {
                             promptForScenarioDescription()
                         }
                         .controlSize(.small)
@@ -206,17 +208,28 @@ struct SettingsView: View {
                         .controlSize(.small)
                     }
                     if let index = selectedUserScenarioIndex {
-                        // 用户自定义场景：命名 + 专属提示词 + 删除
+                        // 用户自定义场景：命名 + 中/EN 双提示词 + 删除
                         TextField(UILang.t("场景名称", "Scenario name"),
                                   text: $customScenarios[index].name)
-                        TextEditor(text: $customScenarios[index].prompt)
+                        Picker("", selection: $scenarioPromptEN) {
+                            Text(UILang.t("中文提示词", "Chinese prompt")).tag(false)
+                            Text(UILang.t("EN 提示词", "English prompt")).tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        TextEditor(text: scenarioPromptEN
+                            ? Binding(
+                                get: { customScenarios[index].promptEN ?? "" },
+                                set: { customScenarios[index].promptEN =
+                                    $0.isEmpty ? nil : $0 })
+                            : $customScenarios[index].prompt)
                             .font(.system(size: 11.5, design: .monospaced))
                             .frame(height: 150)
-                            .id(promptPreset)
+                            .id("\(promptPreset)-\(scenarioPromptEN)")
                         HStack {
                             Text(UILang.t(
-                                "此场景的提示词（中/EN 共用）；留空时按内置优化处理。可在面板场景菜单和应用感知映射中使用。",
-                                "This scenario's prompt (shared by 中/EN); falls back to built-in refine when empty. Available in the panel menu and app-aware mapping."))
+                                "中文版用于默认输出；EN 版用于 EN 模式（留空时自动用中文版+英文输出要求）。中文版留空按内置优化处理。",
+                                "Chinese prompt drives default output; the EN prompt is used in EN mode (falls back to Chinese + English-output rule when empty)."))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             Spacer()
@@ -516,6 +529,10 @@ struct SettingsView: View {
             var out = scenario
             out.name = scenario.name.trimmingCharacters(in: .whitespaces)
             if out.name.isEmpty { out.name = UILang.t("未命名场景", "Unnamed") }
+            if out.promptEN?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == true {
+                out.promptEN = nil
+            }
             return out
         }
         return cleaned.isEmpty ? nil : cleaned

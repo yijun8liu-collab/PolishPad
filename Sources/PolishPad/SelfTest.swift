@@ -45,17 +45,40 @@ enum SelfTest {
               Scenario.from(key: Scenario.user("sc1").keyString,
                             in: config.customScenarios ?? []) == .user("sc1"))
         config.customScenarios = nil
-        // 场景生成响应解析：裸 JSON / 代码围栏 / 前后杂讯 / 坏响应
+        // 场景生成响应解析：裸 JSON / 代码围栏 / 前后杂讯 / 裸换行 / 坏响应
+        let expected = ScenarioGenerator.Generated(name: "A", bodyZH: "甲", bodyEN: "B")
         check("scenarioGen.plain",
-              ScenarioGenerator.parse(#"{"name":"汇报","body":"你是一个工具"}"#)
-                  == .init(name: "汇报", body: "你是一个工具"))
+              ScenarioGenerator.parse(#"{"name":"A","body_zh":"甲","body_en":"B"}"#)
+                  == expected)
         check("scenarioGen.fenced",
-              ScenarioGenerator.parse("```json\n{\"name\":\"A\",\"body\":\"B\"}\n```")
-                  == .init(name: "A", body: "B"))
+              ScenarioGenerator.parse(
+                  "```json\n{\"name\":\"A\",\"body_zh\":\"甲\",\"body_en\":\"B\"}\n```")
+                  == expected)
         check("scenarioGen.noise",
-              ScenarioGenerator.parse("好的，这是结果：{\"name\":\"A\",\"body\":\"B\"} 希望有帮助")
-                  == .init(name: "A", body: "B"))
+              ScenarioGenerator.parse(
+                  "结果：{\"name\":\"A\",\"body_zh\":\"甲\",\"body_en\":\"B\"} 完")
+                  == expected)
+        check("scenarioGen.rawNewline",
+              ScenarioGenerator.parse(
+                  "{\"name\":\"A\",\"body_zh\":\"第一行\n第二行\",\"body_en\":\"B\"}")
+                  == ScenarioGenerator.Generated(
+                      name: "A", bodyZH: "第一行\n第二行", bodyEN: "B"))
         check("scenarioGen.bad", ScenarioGenerator.parse("抱歉我不能") == nil)
+        // 双语解析：EN 模式优先英文版；无英文版时回退中文+英文输出要求
+        config.customScenarios = [CustomScenario(
+            id: "sc2", name: "双语", prompt: "中文版正文", promptEN: "EN BODY")]
+        check("scenario.bilingual.en",
+              config.resolvedSystemPrompt(english: true, scenario: .user("sc2"))
+                  .hasPrefix("EN BODY"))
+        check("scenario.bilingual.zh",
+              config.resolvedSystemPrompt(english: false, scenario: .user("sc2"))
+                  .hasPrefix("中文版正文"))
+        config.customScenarios = [CustomScenario(
+            id: "sc3", name: "单语", prompt: "只有中文")]
+        check("scenario.fallback.en",
+              config.resolvedSystemPrompt(english: true, scenario: .user("sc3"))
+                  .contains("Output language requirement"))
+        config.customScenarios = nil
         config.promptPreset = "slack-english"
         check("preset.slack",
               config.resolvedSystemPrompt(english: false).contains("Slack"))

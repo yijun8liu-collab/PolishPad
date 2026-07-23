@@ -91,7 +91,7 @@ struct SessionView: View {
                             Text(model.t("生成中…", "Generating…"))
                         }
                     } else {
-                        Text(model.t("✨ 生成场景", "✨ Generate"))
+                        Text(model.t("生成场景", "Generate"))
                     }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -656,7 +656,7 @@ struct SessionView: View {
             Button {
                 model.showScenarioCreator = true
             } label: {
-                Label(model.t("✨ 描述创建新场景…", "✨ Describe a new scenario…"),
+                Label(model.t("描述创建新场景…", "Describe a new scenario…"),
                       systemImage: "sparkles")
             }
         } label: {
