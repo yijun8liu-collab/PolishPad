@@ -16,6 +16,8 @@ struct SubmitTextEditor: NSViewRepresentable {
     var onCancel: () -> Void = {}
     /// 提供时，Tab 键触发回调而不是插入制表符/移动焦点
     var onTab: (() -> Void)?
+    /// false 时回车插入普通换行（结果区快速编辑用），不触发 onSubmit
+    var submitOnEnter = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -77,6 +79,8 @@ struct SubmitTextEditor: NSViewRepresentable {
             case #selector(NSResponder.insertNewline(_:)):
                 // IME 正在组字：Enter 是确认候选词，交回给输入法
                 if textView.hasMarkedText() { return false }
+                // 结果区快速编辑：回车就是普通换行
+                if !parent.submitOnEnter { return false }
                 // Shift+Enter：普通换行
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { return false }
                 parent.onSubmit()

@@ -136,12 +136,15 @@ struct SessionView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // 结果区支持直接点击快速编辑（流式/录音期间锁定）；
+                // 回车在这里是普通换行，不触发提交
                 SubmitTextEditor(
                     text: streamingResultText,
-                    isEditable: false,
+                    isEditable: !model.isLoading && !model.isRecording,
                     fontSize: 14.5,
                     inset: NSSize(width: 16, height: 8),
-                    onCancel: { model.handleEscape() }
+                    onCancel: { model.handleEscape() },
+                    submitOnEnter: false
                 )
                 .frame(maxHeight: .infinity)
                 // 纠偏轮等待首字时旧文变暗，示意"正在重写这段"

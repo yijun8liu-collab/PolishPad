@@ -113,41 +113,45 @@ struct NeuralBackgroundView: View {
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
                 Canvas { ctx, size in
                     engine.step(to: timeline.date, in: size, surge: surge)
+                    // 暗色：亮蓝粒子；明亮：深墨蓝"蓝图"风（浅玻璃上要用深色墨水才可见）
                     let base = light
-                        ? Color(red: 0.25, green: 0.35, blue: 0.55)
-                        : Color(red: 0.6, green: 0.76, blue: 1.0)
-                    let boost: Double = surge ? 1.7 : 1.0
+                        ? Color(red: 0.16, green: 0.24, blue: 0.48)
+                        : Color(red: 0.62, green: 0.78, blue: 1.0)
+                    let visibility: Double = light ? 2.6 : 2.0
+                    let boost: Double = (surge ? 1.6 : 1.0) * visibility
+                    let lineWidth: CGFloat = light ? 0.9 : 0.8
 
                     for edge in engine.edges {
                         var path = Path()
                         path.move(to: edge.a)
                         path.addLine(to: edge.b)
-                        ctx.stroke(path, with: .color(base.opacity(edge.alpha * boost)),
-                                   lineWidth: 0.7)
+                        ctx.stroke(path, with: .color(base.opacity(min(edge.alpha * boost, 0.5))),
+                                   lineWidth: lineWidth)
                     }
                     for node in engine.nodes {
-                        let glow = 0.35 + 0.25 * sin(node.phase)
-                        let r: CGFloat = surge ? 1.9 : 1.5
+                        let glow = 0.4 + 0.28 * sin(node.phase)
+                        let r: CGFloat = surge ? 2.1 : 1.7
                         ctx.fill(
                             Path(ellipseIn: CGRect(
                                 x: node.pos.x - r, y: node.pos.y - r,
                                 width: r * 2, height: r * 2)),
-                            with: .color(base.opacity(glow * boost)))
+                            with: .color(base.opacity(min(glow * boost * 0.55, 0.85))))
                     }
                     for pulse in engine.pulses {
                         let p = engine.pulsePoint(pulse)
-                        let halo = CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)
+                        let halo = CGRect(x: p.x - 5.5, y: p.y - 5.5, width: 11, height: 11)
                         ctx.fill(Path(ellipseIn: halo),
-                                 with: .color(base.opacity(0.22)))
-                        let core = CGRect(x: p.x - 2, y: p.y - 2, width: 4, height: 4)
-                        ctx.fill(Path(ellipseIn: core),
-                                 with: .color(Color(red: 0.75, green: 0.88, blue: 1.0)
-                                     .opacity(0.95)))
+                                 with: .color(base.opacity(0.30)))
+                        let core = CGRect(x: p.x - 2.2, y: p.y - 2.2, width: 4.4, height: 4.4)
+                        let coreColor = light
+                            ? Color(red: 0.12, green: 0.28, blue: 0.85)
+                            : Color(red: 0.78, green: 0.9, blue: 1.0)
+                        ctx.fill(Path(ellipseIn: core), with: .color(coreColor.opacity(0.95)))
                     }
                 }
             }
             .allowsHitTesting(false)
-            .opacity(surge ? 0.85 : 0.4)
+            .opacity(surge ? 0.95 : 0.6)
             .animation(.easeInOut(duration: 0.4), value: surge)
         }
     }
