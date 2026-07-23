@@ -337,6 +337,9 @@ struct SettingsView: View {
             statusMessage = UILang.t("✅ 已保存", "✅ Saved")
             statusIsError = false
             NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
+            // 保存成功即自动关窗（失败时留在原地显示错误）；用 HUD 补一个确认
+            HUD.shared.flashSuccess(UILang.t("设置已保存", "Settings saved"))
+            NSApp.keyWindow?.close()
         } catch {
             statusMessage = UILang.t("保存失败：", "Save failed: ") + error.localizedDescription
             statusIsError = true
