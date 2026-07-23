@@ -181,14 +181,6 @@ final class SessionModel: ObservableObject {
         config.resolvedSystemPrompt(english: outputEnglish, presetOverride: activePreset)
     }
 
-    /// 面板开着时粘贴目标切到了别的应用：上一次粘贴不在新目标里，
-    /// 回到插入语义（回车直接贴，不退格替换）
-    func pasteTargetSwitched(to appName: String) {
-        hasAutoPasted = false
-        guard phase == .reviewing else { return }
-        statusText = t("粘贴目标 → \(appName)", "Paste target → \(appName)")
-    }
-
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
     func requestCloseAndPaste() {
         guard !currentResult.isEmpty else {

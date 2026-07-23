@@ -41,28 +41,6 @@ final class PanelController {
         model.onAutoPaste = { [weak self] replacePrevious in
             self?.pasteAndReturn(replacePrevious: replacePrevious)
         }
-
-        // 面板开着时用户切到了别的应用：粘贴目标跟着走。
-        // 同应用内换输入框无需跟踪——⌘V 天然落在应用当前聚焦的输入框
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
-                    as? NSRunningApplication else { return }
-            Task { @MainActor in self?.externalAppActivated(app) }
-        }
-    }
-
-    /// 面板可见期间外部应用被激活：更新粘贴目标。
-    /// 上一次粘贴不在新目标里，清掉替换基线，避免在新输入框里误退格
-    private func externalAppActivated(_ app: NSRunningApplication) {
-        guard panel.isVisible,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              app.processIdentifier != previousApp?.processIdentifier else { return }
-        previousApp = app
-        lastPastedText = nil
-        model.pasteTargetSwitched(to: app.localizedName ?? "新目标")
     }
 
     var isVisible: Bool { panel.isVisible }
