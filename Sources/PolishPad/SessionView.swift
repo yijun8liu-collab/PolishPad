@@ -95,7 +95,7 @@ struct SessionView: View {
             .frame(height: 176)
 
             if model.draft.isEmpty {
-                Text(model.t("输入要优化的内容…", "Type what you want refined…"))
+                Text(composerPlaceholder)
                     .font(.system(size: 15))
                     .foregroundColor(Color.secondary.opacity(0.5))
                     .padding(.top, 18)
@@ -409,6 +409,24 @@ struct SessionView: View {
             HintItem(keys: ["↩"], label: model.t("替换 · 留空完成", "replace · empty = done")),
             HintItem(keys: ["⌘[", "⌘]"], label: model.t("版本", "versions")),
         ]
+    }
+
+    /// 草稿框占位提示跟随当前场景
+    private var composerPlaceholder: String {
+        switch model.activePreset {
+        case .polish:
+            return model.t("输入要优化的内容…", "Type what you want refined…")
+        case .slackEnglish:
+            return model.t("输入要翻译成 Slack 英文的内容…",
+                           "Type the message to turn into Slack English…")
+        case .formal:
+            return model.t("输入要改为正式表达的内容…",
+                           "Type what to make formal…")
+        case .concise:
+            return model.t("输入要精简的内容…", "Type what to condense…")
+        case .custom:
+            return model.t("输入要处理的内容…", "Type what to process…")
+        }
     }
 
     /// 回车动作的动词跟随当前场景（Slack=翻译、正式/精简各有其名）
