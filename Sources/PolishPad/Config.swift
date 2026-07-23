@@ -53,6 +53,8 @@ enum PromptPreset: String, CaseIterable {
 struct CustomScenario: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
     var name: String
+    /// EN 界面显示的场景名；缺省时用中文名
+    var nameEN: String? = nil
     /// 中文（默认）提示词
     var prompt: String
     /// EN 模式提示词；缺省时用中文版 + 自动附加英文输出要求

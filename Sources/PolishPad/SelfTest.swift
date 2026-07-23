@@ -46,7 +46,7 @@ enum SelfTest {
                             in: config.customScenarios ?? []) == .user("sc1"))
         config.customScenarios = nil
         // 场景生成响应解析：裸 JSON / 代码围栏 / 前后杂讯 / 裸换行 / 坏响应
-        let expected = ScenarioGenerator.Generated(name: "A", bodyZH: "甲", bodyEN: "B")
+        let expected = ScenarioGenerator.Generated(name: "A", nameEN: nil, bodyZH: "甲", bodyEN: "B")
         check("scenarioGen.plain",
               ScenarioGenerator.parse(#"{"name":"A","body_zh":"甲","body_en":"B"}"#)
                   == expected)
@@ -62,7 +62,11 @@ enum SelfTest {
               ScenarioGenerator.parse(
                   "{\"name\":\"A\",\"body_zh\":\"第一行\n第二行\",\"body_en\":\"B\"}")
                   == ScenarioGenerator.Generated(
-                      name: "A", bodyZH: "第一行\n第二行", bodyEN: "B"))
+                      name: "A", nameEN: nil, bodyZH: "第一行\n第二行", bodyEN: "B"))
+        check("scenarioGen.nameEN",
+              ScenarioGenerator.parse(
+                  #"{"name":"汇报","name_en":"Report","body_zh":"甲","body_en":"B"}"#)?
+                  .nameEN == "Report")
         check("scenarioGen.bad", ScenarioGenerator.parse("抱歉我不能") == nil)
         // 双语解析：EN 模式优先英文版；无英文版时回退中文+英文输出要求
         config.customScenarios = [CustomScenario(

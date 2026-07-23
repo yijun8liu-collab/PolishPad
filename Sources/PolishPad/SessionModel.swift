@@ -249,6 +249,7 @@ final class SessionModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty, !isGeneratingScenario else { return }
         isGeneratingScenario = true
+        HUD.shared.showWorking(t("场景生成中…", "Generating scenario…"))
         Task { [weak self] in
             defer { self?.isGeneratingScenario = false }
             do {
@@ -260,9 +261,12 @@ final class SessionModel: ObservableObject {
                 self.showScenarioCreator = false
                 self.scenarioDescription = ""
                 self.autoPresetNote = nil
-                self.statusText = self.t("场景「\(scenario.name)」已创建并选用",
-                                         "Scenario \"\(scenario.name)\" created & selected")
+                let shownName = self.scenarioName(.user(scenario.id))
+                self.statusText = self.t("场景「\(shownName)」已创建并选用",
+                                         "Scenario \"\(shownName)\" created & selected")
+                HUD.shared.flashSuccess(self.t("场景已创建", "Scenario created"))
             } catch {
+                HUD.shared.hide()
                 self?.errorMessage = error.localizedDescription
             }
         }
@@ -274,8 +278,10 @@ final class SessionModel: ObservableObject {
         case .builtin(let preset):
             return t(preset.labelZH, preset.labelEN)
         case .user(let id):
-            return customScenarios.first { $0.id == id }?.name
-                ?? t("未命名场景", "Unnamed")
+            guard let scenario = customScenarios.first(where: { $0.id == id }) else {
+                return t("未命名场景", "Unnamed")
+            }
+            return outputEnglish ? (scenario.nameEN ?? scenario.name) : scenario.name
         }
     }
 

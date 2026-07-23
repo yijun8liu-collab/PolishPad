@@ -186,7 +186,10 @@ struct SettingsView: View {
                             if !customScenarios.isEmpty {
                                 Divider()
                                 ForEach(customScenarios) { scenario in
-                                    Text(scenario.name).tag("user:" + scenario.id)
+                                    Text(UILang.isEnglish
+                                        ? (scenario.nameEN ?? scenario.name)
+                                        : scenario.name)
+                                        .tag("user:" + scenario.id)
                                 }
                             }
                         }
@@ -208,7 +211,12 @@ struct SettingsView: View {
                     if let index = selectedUserScenarioIndex {
                         // 用户自定义场景：命名 + 中/EN 双提示词 + 删除
                         TextField(UILang.t("场景名称", "Scenario name"),
-                                  text: $customScenarios[index].name)
+                                  text: uiEnglish
+                                      ? Binding(
+                                          get: { customScenarios[index].nameEN ?? "" },
+                                          set: { customScenarios[index].nameEN =
+                                              $0.isEmpty ? nil : $0 })
+                                      : $customScenarios[index].name)
                         // 与内置场景一致：编辑器随语言开关自动显示对应版本
                         TextEditor(text: uiEnglish
                             ? Binding(
@@ -289,7 +297,10 @@ struct SettingsView: View {
                                         .tag(preset.rawValue)
                                 }
                                 ForEach(customScenarios) { scenario in
-                                    Text(scenario.name).tag("user:" + scenario.id)
+                                    Text(UILang.isEnglish
+                                        ? (scenario.nameEN ?? scenario.name)
+                                        : scenario.name)
+                                        .tag("user:" + scenario.id)
                                 }
                             }
                             .labelsHidden()
@@ -526,6 +537,9 @@ struct SettingsView: View {
                 .isEmpty == true {
                 out.promptEN = nil
             }
+            if out.nameEN?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                out.nameEN = nil
+            }
             return out
         }
         return cleaned.isEmpty ? nil : cleaned
@@ -552,15 +566,20 @@ struct SettingsView: View {
         guard !description.isEmpty else { return }
         statusMessage = UILang.t("场景生成中…", "Generating scenario…")
         statusIsError = false
+        HUD.shared.showWorking(UILang.t("场景生成中…", "Generating scenario…"))
         Task { @MainActor in
             do {
                 let scenario = try await ScenarioGenerator.generateAndSave(description)
                 customScenarios = ConfigStore.loadRaw()?.customScenarios ?? customScenarios
                 promptPreset = "user:" + scenario.id
-                statusMessage = UILang.t("场景「\(scenario.name)」已生成",
-                                         "Scenario \"\(scenario.name)\" generated")
+                let shownName = UILang.isEnglish
+                    ? (scenario.nameEN ?? scenario.name) : scenario.name
+                statusMessage = UILang.t("场景「\(shownName)」已生成",
+                                         "Scenario \"\(shownName)\" generated")
+                HUD.shared.flashSuccess(UILang.t("场景已创建", "Scenario created"))
                 NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
             } catch {
+                HUD.shared.hide()
                 statusMessage = error.localizedDescription
                 statusIsError = true
             }

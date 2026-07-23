@@ -75,6 +75,7 @@ struct SessionView: View {
             .textFieldStyle(.roundedBorder)
             .lineLimit(2...4)
             .frame(width: 330)
+            .disabled(model.isGeneratingScenario)
             .onSubmit { model.generateScenario() }
             HStack(spacing: 10) {
                 Button(model.t("取消", "Cancel")) {

@@ -5,11 +5,13 @@ import Foundation
 enum ScenarioGenerator {
     struct Generated: Decodable, Equatable {
         let name: String
+        let nameEN: String?
         let bodyZH: String
         let bodyEN: String
 
         enum CodingKeys: String, CodingKey {
             case name
+            case nameEN = "name_en"
             case bodyZH = "body_zh"
             case bodyEN = "body_en"
         }
@@ -54,7 +56,7 @@ enum ScenarioGenerator {
 
     private static let metaPromptZH = """
     你是场景配置生成器。用户会用一句话描述一个文本处理场景，你只输出一个单行合法 JSON 对象（无任何其他文字、无代码块围栏、字符串内换行必须写成 \\n 转义）：
-    {"name": "场景名（2-6个字）", "body_zh": "中文提示词正文", "body_en": "English prompt body"}
+    {"name": "场景名（2-6个字）", "name_en": "English name (1-3 words)", "body_zh": "中文提示词正文", "body_en": "English prompt body"}
 
     两个 body 的要求（语义一致，各自用对应语言书写）：
     1. 以"你是一个XX工具。用户会给你一段文字。你的任务是……"（英文版用 "You are a ... tool. The user gives you a passage. Your job is ..."）开头，明确改写目标。
@@ -81,6 +83,7 @@ enum ScenarioGenerator {
         // 中英两版各自拼接对应语言的协议块（含铁律：只改写不回应）
         let scenario = CustomScenario(
             name: String(generated.name.prefix(12)),
+            nameEN: generated.nameEN.map { String($0.prefix(24)) },
             prompt: generated.bodyZH.trimmingCharacters(in: .whitespacesAndNewlines)
                 + "\n\n" + AppConfig.scenarioRulesZH,
             promptEN: generated.bodyEN.trimmingCharacters(in: .whitespacesAndNewlines)
