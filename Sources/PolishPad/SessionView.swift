@@ -48,7 +48,6 @@ struct SessionView: View {
                 )
         )
         .overlay(hiddenShortcuts)
-        .animation(.easeOut(duration: 0.18), value: model.phase)
     }
 
     // MARK: - 头栏：左上角关闭（mac 习惯），兼作拖动区
