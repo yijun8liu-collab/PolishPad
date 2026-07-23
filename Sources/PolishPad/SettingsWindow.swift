@@ -38,6 +38,8 @@ struct SettingsView: View {
     @State private var promptPreset = "polish"
     /// 内置场景提示词的用户覆写（键=场景 rawValue）
     @State private var presetOverrides: [String: String] = [:]
+    /// 用户自定义场景列表
+    @State private var customScenarios: [CustomScenario] = []
     @State private var appRows: [AppMappingRow] = []
     @State private var glossaryText = ""
     @State private var updateStatus = ""
@@ -49,6 +51,13 @@ struct SettingsView: View {
     /// 必须恢复全局热键并摘掉吞键的本地监听，否则热键失效、面板打不出字
     private var windowWillClose: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+    }
+
+    /// 选中的用户场景在列表中的下标（未选用户场景时为 nil）
+    private var selectedUserScenarioIndex: Int? {
+        guard promptPreset.hasPrefix("user:") else { return nil }
+        let id = String(promptPreset.dropFirst(5))
+        return customScenarios.firstIndex { $0.id == id }
     }
 
     /// 当前选中的内置场景（自定义除外）
@@ -168,14 +177,51 @@ struct SettingsView: View {
                 }
 
                 Section(UILang.t("场景预设", "Scenario Preset")) {
-                    Picker(UILang.t("场景", "Scenario"), selection: $promptPreset) {
-                        ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
-                            Text(UILang.t(preset.labelZH, preset.labelEN)).tag(preset.rawValue)
+                    HStack {
+                        Picker(UILang.t("场景", "Scenario"), selection: $promptPreset) {
+                            ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                                Text(UILang.t(preset.labelZH, preset.labelEN)).tag(preset.rawValue)
+                            }
+                            if !customScenarios.isEmpty {
+                                Divider()
+                                ForEach(customScenarios) { scenario in
+                                    Text(scenario.name).tag("user:" + scenario.id)
+                                }
+                            }
                         }
+                        .pickerStyle(.menu)
+                        // menu 型 Picker 的选项文字有缓存，语言切换/增删场景时按身份重建
+                        .id("\(uiEnglish)-\(customScenarios.count)")
+                        Button(UILang.t("＋ 新建场景", "＋ New scenario")) {
+                            let scenario = CustomScenario(
+                                name: UILang.t("新场景", "New scenario"), prompt: "")
+                            customScenarios.append(scenario)
+                            promptPreset = "user:" + scenario.id
+                        }
+                        .controlSize(.small)
                     }
-                    .pickerStyle(.menu)
-                    // menu 型 Picker 的选项文字有缓存，语言切换时按身份重建
-                    .id(uiEnglish)
+                    if let index = selectedUserScenarioIndex {
+                        // 用户自定义场景：命名 + 专属提示词 + 删除
+                        TextField(UILang.t("场景名称", "Scenario name"),
+                                  text: $customScenarios[index].name)
+                        TextEditor(text: $customScenarios[index].prompt)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .frame(height: 150)
+                            .id(promptPreset)
+                        HStack {
+                            Text(UILang.t(
+                                "此场景的提示词（中/EN 共用）；留空时按内置优化处理。可在面板场景菜单和应用感知映射中使用。",
+                                "This scenario's prompt (shared by 中/EN); falls back to built-in refine when empty. Available in the panel menu and app-aware mapping."))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button(UILang.t("删除此场景", "Delete scenario"), role: .destructive) {
+                                customScenarios.remove(at: index)
+                                promptPreset = "polish"
+                            }
+                            .controlSize(.small)
+                        }
+                    } else {
                     Text(UILang.t(
                         (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionZH,
                         (PromptPreset(rawValue: promptPreset) ?? .polish).descriptionEN
@@ -223,6 +269,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    }
                 }
 
                 Section(UILang.t("应用感知（唤起面板时按前台应用自动选场景）",
@@ -237,9 +284,12 @@ struct SettingsView: View {
                                     Text(UILang.t(preset.labelZH, preset.labelEN))
                                         .tag(preset.rawValue)
                                 }
+                                ForEach(customScenarios) { scenario in
+                                    Text(scenario.name).tag("user:" + scenario.id)
+                                }
                             }
                             .labelsHidden()
-                            .id(uiEnglish)
+                            .id("\(uiEnglish)-\(customScenarios.count)")
                             .frame(width: 140)
                             Button {
                                 appRows.removeAll { $0.id == row.id }
@@ -398,6 +448,13 @@ struct SettingsView: View {
             promptPreset = PromptPreset.custom.rawValue
         }
         presetOverrides = config.presetOverrides ?? [:]
+        customScenarios = config.customScenarios ?? []
+        // 默认场景指向已删除的用户场景时回退
+        if (config.promptPreset ?? "").hasPrefix("user:"),
+           Scenario.from(key: config.promptPreset!, in: customScenarios)
+               == .builtin(.polish) {
+            promptPreset = "polish"
+        }
         appRows = (config.appPresets ?? [:])
             .sorted { $0.key < $1.key }
             .map { AppMappingRow(bundleID: $0.key, preset: $0.value) }
@@ -435,7 +492,8 @@ struct SettingsView: View {
             appPresets: mappings.isEmpty ? nil : mappings,
             glossary: glossaryLines.isEmpty ? nil : glossaryLines,
             idlePrefetch: idlePrefetch,
-            presetOverrides: normalizedOverrides()
+            presetOverrides: normalizedOverrides(),
+            customScenarios: normalizedScenarios()
         )
     }
 
@@ -451,6 +509,17 @@ struct SettingsView: View {
             out[key] = trimmed
         }
         return out.isEmpty ? nil : out
+    }
+
+    /// 写盘前清洗：空名补默认名；整表为空则不落盘
+    private func normalizedScenarios() -> [CustomScenario]? {
+        let cleaned = customScenarios.map { scenario -> CustomScenario in
+            var out = scenario
+            out.name = scenario.name.trimmingCharacters(in: .whitespaces)
+            if out.name.isEmpty { out.name = UILang.t("未命名场景", "Unnamed") }
+            return out
+        }
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private func save() {

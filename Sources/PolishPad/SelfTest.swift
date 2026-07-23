@@ -34,6 +34,17 @@ enum SelfTest {
         check("preset.override",
               config.resolvedSystemPrompt(english: false).hasPrefix("OVERRIDE-TEST"))
         config.presetOverrides = nil
+        config.customScenarios = [CustomScenario(id: "sc1", name: "测试场景", prompt: "USER-SCENE")]
+        check("scenario.user",
+              config.resolvedSystemPrompt(english: false, scenario: .user("sc1"))
+                  .hasPrefix("USER-SCENE"))
+        check("scenario.user.fallback",
+              Scenario.from(key: "user:gone", in: config.customScenarios ?? [])
+                  == .builtin(.polish))
+        check("scenario.keyRoundtrip",
+              Scenario.from(key: Scenario.user("sc1").keyString,
+                            in: config.customScenarios ?? []) == .user("sc1"))
+        config.customScenarios = nil
         config.promptPreset = "slack-english"
         check("preset.slack",
               config.resolvedSystemPrompt(english: false).contains("Slack"))

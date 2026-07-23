@@ -48,7 +48,9 @@ final class SessionModel: ObservableObject {
     @Published var focusToken = 0
     @Published var isRecording = false
     /// 本会话使用的场景预设（底栏可随手切换）
-    @Published var activePreset: PromptPreset = .polish
+    @Published var activeScenario: Scenario = .builtin(.polish)
+    /// 用户自定义场景列表（供面板菜单显示；设置保存后刷新）
+    @Published var customScenarios: [CustomScenario] = []
     /// 应用感知自动选择的提示（手动切换后清除）
     @Published var autoPresetNote: String?
     /// 当前显示第几版（1-based）
@@ -119,6 +121,14 @@ final class SessionModel: ObservableObject {
         speech.onError = { [weak self] message in
             self?.errorMessage = message
         }
+        // 设置保存后刷新用户场景列表（面板开着时菜单同步最新）
+        NotificationCenter.default.addObserver(
+            forName: .polishPadSettingsSaved, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.customScenarios = ConfigStore.loadRaw()?.customScenarios ?? []
+            }
+        }
         // 设置窗口里的语言开关与面板开关是同一份状态：外部改动时跟随
         NotificationCenter.default.addObserver(
             forName: .polishPadLanguageChanged, object: nil, queue: .main
@@ -186,11 +196,11 @@ final class SessionModel: ObservableObject {
     /// 手动切换场景（清除自动选择提示）。
     /// 审阅态下切换 = 把当前文本按新场景重新生成一版——否则新场景
     /// 对已有文本毫无作用（追加/修改轮次都以旧文本为锚）
-    func selectPreset(_ preset: PromptPreset) {
-        let previous = activePreset
-        activePreset = preset
+    func selectScenario(_ scenario: Scenario) {
+        let previous = activeScenario
+        activeScenario = scenario
         autoPresetNote = nil
-        guard preset != previous, phase == .reviewing,
+        guard scenario != previous, phase == .reviewing,
               !currentResult.isEmpty, !isLoading else { return }
         reRenderCurrentResult()
     }
@@ -211,15 +221,25 @@ final class SessionModel: ObservableObject {
         run(requestMessages: requestMessages, config: config)
     }
 
-    /// 应用感知：唤起时按前台应用自动选场景
+    /// 应用感知：唤起时按前台应用自动选场景（内置或用户场景均可）
     func applyAutoPreset(bundleID: String?, appName: String?) {
         guard let bundleID,
               let mapping = ConfigStore.loadRaw()?.appPresets,
-              let raw = mapping[bundleID],
-              let preset = PromptPreset(rawValue: raw) else { return }
-        activePreset = preset
+              let raw = mapping[bundleID] else { return }
+        activeScenario = Scenario.from(key: raw, in: customScenarios)
         let name = appName ?? bundleID
         autoPresetNote = t("已按 \(name) 自动选择", "Auto-selected for \(name)")
+    }
+
+    /// 当前场景的显示名
+    func scenarioName(_ scenario: Scenario) -> String {
+        switch scenario {
+        case .builtin(let preset):
+            return t(preset.labelZH, preset.labelEN)
+        case .user(let id):
+            return customScenarios.first { $0.id == id }?.name
+                ?? t("未命名场景", "Unnamed")
+        }
     }
 
     // MARK: - 停顿预取
@@ -283,7 +303,7 @@ final class SessionModel: ObservableObject {
     }
 
     private func systemContent(_ config: AppConfig) -> String {
-        config.resolvedSystemPrompt(english: outputEnglish, presetOverride: activePreset)
+        config.resolvedSystemPrompt(english: outputEnglish, scenario: activeScenario)
     }
 
     /// 自动粘贴未能执行（目标应用没激活/权限缺失）：回滚"已粘贴"标记，
@@ -432,7 +452,7 @@ final class SessionModel: ObservableObject {
         // 每轮成功即写入历史（应用退出也不丢）
         HistoryStore.shared.upsert(
             id: sessionID, original: draft, versions: versions,
-            preset: activePreset.rawValue
+            preset: activeScenario.keyString
         )
 
         if ConfigStore.loadRaw()?.autoPaste ?? true {
@@ -521,8 +541,10 @@ final class SessionModel: ObservableObject {
         prefetchTask?.cancel()
         sessionID = UUID()
         autoPresetNote = nil
-        activePreset = PromptPreset(
-            rawValue: ConfigStore.loadRaw()?.promptPreset ?? "polish") ?? .polish
+        customScenarios = ConfigStore.loadRaw()?.customScenarios ?? []
+        activeScenario = Scenario.from(
+            key: ConfigStore.loadRaw()?.promptPreset ?? "polish",
+            in: customScenarios)
         bumpFocus()
     }
 

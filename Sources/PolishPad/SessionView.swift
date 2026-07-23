@@ -481,7 +481,10 @@ struct SessionView: View {
 
     /// 草稿框占位提示跟随当前场景
     private var composerPlaceholder: String {
-        switch model.activePreset {
+        guard case .builtin(let preset) = model.activeScenario else {
+            return model.t("输入要处理的内容…", "Type what you want processed…")
+        }
+        switch preset {
         case .polish:
             return model.t("输入要优化的内容…", "Type what you want refined…")
         case .slackEnglish:
@@ -499,7 +502,10 @@ struct SessionView: View {
 
     /// 回车动作的动词跟随当前场景（Slack=翻译、正式/精简各有其名）
     private var submitVerb: String {
-        switch model.activePreset {
+        guard case .builtin(let preset) = model.activeScenario else {
+            return model.t("处理", "process")
+        }
+        switch preset {
         case .polish: return model.t("优化", "refine")
         case .slackEnglish: return model.t("翻译", "translate")
         case .formal: return model.t("正式化", "formalize")
@@ -565,23 +571,21 @@ struct SessionView: View {
         .buttonStyle(.plain)
     }
 
-    /// 场景快切：逐条消息级的场景选择
+    /// 场景快切：内置预设 + 用户自定义场景
     private var presetMenu: some View {
         Menu {
             ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
-                Button {
-                    model.selectPreset(preset)
-                } label: {
-                    if preset == model.activePreset {
-                        Label(model.t(preset.labelZH, preset.labelEN), systemImage: "checkmark")
-                    } else {
-                        Text(model.t(preset.labelZH, preset.labelEN))
-                    }
+                scenarioItem(.builtin(preset))
+            }
+            if !model.customScenarios.isEmpty {
+                Divider()
+                ForEach(model.customScenarios) { scenario in
+                    scenarioItem(.user(scenario.id))
                 }
             }
         } label: {
             HStack(spacing: 3) {
-                Text(presetShortLabel(model.activePreset))
+                Text(scenarioShortLabel(model.activeScenario))
                     .font(.system(size: 10, weight: .semibold))
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7))
@@ -597,10 +601,33 @@ struct SessionView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(model.t((model.activePreset).descriptionZH, (model.activePreset).descriptionEN))
+        .help(scenarioHelp)
     }
 
-    private func presetShortLabel(_ preset: PromptPreset) -> String {
+    private func scenarioItem(_ scenario: Scenario) -> some View {
+        Button {
+            model.selectScenario(scenario)
+        } label: {
+            if scenario == model.activeScenario {
+                Label(model.scenarioName(scenario), systemImage: "checkmark")
+            } else {
+                Text(model.scenarioName(scenario))
+            }
+        }
+    }
+
+    private var scenarioHelp: String {
+        if case .builtin(let preset) = model.activeScenario {
+            return model.t(preset.descriptionZH, preset.descriptionEN)
+        }
+        return model.scenarioName(model.activeScenario)
+    }
+
+    private func scenarioShortLabel(_ scenario: Scenario) -> String {
+        guard case .builtin(let preset) = scenario else {
+            let name = model.scenarioName(scenario)
+            return name.count > 8 ? String(name.prefix(8)) + "…" : name
+        }
         switch preset {
         case .polish: return model.t("优化", "Refine")
         case .slackEnglish: return "Slack"

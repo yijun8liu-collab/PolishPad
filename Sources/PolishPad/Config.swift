@@ -49,6 +49,37 @@ enum PromptPreset: String, CaseIterable {
     }
 }
 
+/// 用户自定义场景：自己命名 + 自己的提示词，可建多个
+struct CustomScenario: Codable, Identifiable, Equatable {
+    var id: String = UUID().uuidString
+    var name: String
+    var prompt: String
+}
+
+/// 会话场景标识：内置预设或用户自定义场景。
+/// 序列化为字符串键：内置用 rawValue，自定义用 "user:<id>"
+enum Scenario: Hashable {
+    case builtin(PromptPreset)
+    case user(String)
+
+    var keyString: String {
+        switch self {
+        case .builtin(let preset): return preset.rawValue
+        case .user(let id): return "user:" + id
+        }
+    }
+
+    /// 从字符串键还原；自定义场景已被删除时回退到内置优化
+    static func from(key: String, in scenarios: [CustomScenario]) -> Scenario {
+        if key.hasPrefix("user:") {
+            let id = String(key.dropFirst(5))
+            if scenarios.contains(where: { $0.id == id }) { return .user(id) }
+            return .builtin(.polish)
+        }
+        return .builtin(PromptPreset(rawValue: key) ?? .polish)
+    }
+}
+
 struct AppConfig: Codable {
     var baseURL: String
     var apiKey: String
@@ -76,6 +107,8 @@ struct AppConfig: Codable {
     /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，
     /// 中/EN 共用；删除/清空则恢复内置
     var presetOverrides: [String: String]? = nil
+    /// 用户自定义场景列表（可多个、各自命名）
+    var customScenarios: [CustomScenario]? = nil
 
     static let defaultSystemPrompt = """
     你是一个文本改写工具，不是 AI 助手。用户给你的文字是一份【消息草稿】——他准备把这段话发给别人（通常是某个 AI 助手）。你的唯一任务是把草稿改写得更清晰：理清逻辑、分点组织、补全指代，保留所有原始信息和意图。
@@ -272,6 +305,32 @@ struct AppConfig: Codable {
             + glossaryBlock(english: english)
     }
 
+    /// 按场景标识解析：用户场景用其自带提示词（空则回退内置优化）
+    func resolvedSystemPrompt(english: Bool, scenario: Scenario?) -> String {
+        if case let .user(id) = scenario,
+           let custom = customScenarios?.first(where: { $0.id == id }) {
+            let prompt = custom.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !prompt.isEmpty {
+                return Self.applyEnglishRequirement(prompt, english: english)
+                    + glossaryBlock(english: english)
+            }
+            return resolvedSystemPrompt(english: english, presetOverride: .polish)
+        }
+        if case let .builtin(preset) = scenario {
+            return resolvedSystemPrompt(english: english, presetOverride: preset)
+        }
+        return resolvedSystemPrompt(english: english, presetOverride: nil)
+    }
+
+    /// EN 模式下给用户提示词追加英文输出要求（自定义/用户场景共用）
+    static func applyEnglishRequirement(_ prompt: String, english: Bool) -> String {
+        guard english else { return prompt }
+        return prompt + "\n\nOutput language requirement: regardless of the input "
+            + "language, write the result in natural, fluent English (keep code, "
+            + "commands, URLs and proper nouns as-is). This overrides any rule about "
+            + "preserving the original language."
+    }
+
     /// 各内置场景的出厂提示词（设置界面展示/恢复默认用）
     static func builtinPrompt(_ preset: PromptPreset, english: Bool) -> String {
         switch preset {
@@ -307,13 +366,7 @@ struct AppConfig: Codable {
                 return english ? Self.defaultSystemPromptEnglish : Self.defaultSystemPrompt
             }
             // 自定义提示词优先；EN 模式下追加英文输出要求
-            if english {
-                return custom + "\n\nOutput language requirement: regardless of the input "
-                    + "language, write the result in natural, fluent English (keep code, "
-                    + "commands, URLs and proper nouns as-is). This overrides any rule about "
-                    + "preserving the original language."
-            }
-            return custom
+            return Self.applyEnglishRequirement(custom, english: english)
         }
     }
 }
