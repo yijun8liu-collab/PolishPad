@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var hotkeyAll = "ctrl+option+a"
     @State private var speechLocale = "zh-CN"
     @State private var autoPaste = true
+    @State private var idlePrefetch = true
     /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
     @State private var panelSizeChoice = "medium"
     @State private var systemPrompt = ""
@@ -101,6 +102,13 @@ struct SettingsView: View {
                         .onChange(of: launchAtLogin) { enabled in
                             setLaunchAtLogin(enabled)
                         }
+                    Toggle(UILang.t("停顿预取（回车秒出）", "Idle prefetch (instant Enter)"),
+                           isOn: $idlePrefetch)
+                    Text(UILang.t(
+                        "输入停顿 2 秒后在后台预先优化一轮；回车时内容未再改动即瞬间出结果（状态栏 ⚡）。注意：预取会产生额外的 API 调用，每次有效停顿约多消耗一轮 token。",
+                        "After a 2s typing pause, a round is pre-run in the background; press Enter without further edits and the result appears instantly (⚡). Note: prefetching makes extra API calls — roughly one additional round of tokens per pause."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     Picker(UILang.t("面板大小", "Panel size"), selection: $panelSizeChoice) {
                         Text(UILang.t("小", "Small")).tag("small")
                         Text(UILang.t("中", "Medium")).tag("medium")
@@ -287,6 +295,7 @@ struct SettingsView: View {
         hotkeyAll = config.hotkeyPolishAll ?? "ctrl+option+a"
         speechLocale = config.speechLocale ?? "zh-CN"
         autoPaste = config.autoPaste ?? true
+        idlePrefetch = config.idlePrefetch ?? true
         let size = PanelSize.current
         panelSizeChoice = PanelSize.presets.first {
             abs($0.w - size.width) < 2 && abs($0.h - size.height) < 2
@@ -332,7 +341,8 @@ struct SettingsView: View {
             speechLocale: speechLocale.trimmingCharacters(in: .whitespaces),
             autoPaste: autoPaste,
             appPresets: mappings.isEmpty ? nil : mappings,
-            glossary: glossaryLines.isEmpty ? nil : glossaryLines
+            glossary: glossaryLines.isEmpty ? nil : glossaryLines,
+            idlePrefetch: idlePrefetch
         )
     }
 

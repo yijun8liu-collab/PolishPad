@@ -71,6 +71,8 @@ struct AppConfig: Codable {
     var appPresets: [String: String]?
     /// 个人术语表：每行 "术语=固定译法" 或 "术语"（原样保留）
     var glossary: [String]?
+    /// 停顿预取：输入停顿时后台预先优化，回车秒出（默认开；有额外 token 消耗）
+    var idlePrefetch: Bool? = nil
 
     static let defaultSystemPrompt = """
     你是一个文本改写工具，不是 AI 助手。用户给你的文字是一份【消息草稿】——他准备把这段话发给别人（通常是某个 AI 助手）。你的唯一任务是把草稿改写得更清晰：理清逻辑、分点组织、补全指代，保留所有原始信息和意图。

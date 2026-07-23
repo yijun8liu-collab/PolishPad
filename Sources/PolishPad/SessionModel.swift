@@ -206,6 +206,7 @@ final class SessionModel: ObservableObject {
     // MARK: - 停顿预取
 
     private func maybePrefetch() {
+        guard ConfigStore.loadRaw()?.idlePrefetch ?? true else { return }
         guard phase == .composing, !isLoading else { return }
         let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard input.count >= 8 else { return }
