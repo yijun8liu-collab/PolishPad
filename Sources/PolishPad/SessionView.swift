@@ -517,7 +517,7 @@ struct SessionView: View {
         case .slackEnglish: return "Slack"
         case .formal: return model.t("正式", "Formal")
         case .concise: return model.t("精简", "Brief")
-        case .custom: return model.t("自定", "Custom")
+        case .custom: return model.t("自定义", "Custom")
         }
     }
 
