@@ -30,6 +30,10 @@ enum SelfTest {
         // 1. 场景预设解析
         check("preset.polish.zh",
               config.resolvedSystemPrompt(english: false).contains("文本改写工具，不是 AI 助手"))
+        config.presetOverrides = ["polish": "OVERRIDE-TEST"]
+        check("preset.override",
+              config.resolvedSystemPrompt(english: false).hasPrefix("OVERRIDE-TEST"))
+        config.presetOverrides = nil
         config.promptPreset = "slack-english"
         check("preset.slack",
               config.resolvedSystemPrompt(english: false).contains("Slack"))

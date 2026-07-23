@@ -36,6 +36,8 @@ struct SettingsView: View {
     @State private var statusIsError = false
     @State private var testing = false
     @State private var promptPreset = "polish"
+    /// 内置场景提示词的用户覆写（键=场景 rawValue）
+    @State private var presetOverrides: [String: String] = [:]
     @State private var appRows: [AppMappingRow] = []
     @State private var glossaryText = ""
     @State private var updateStatus = ""
@@ -47,6 +49,33 @@ struct SettingsView: View {
     /// 必须恢复全局热键并摘掉吞键的本地监听，否则热键失效、面板打不出字
     private var windowWillClose: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+    }
+
+    /// 当前选中的内置场景（自定义除外）
+    private var selectedBuiltinPreset: PromptPreset {
+        PromptPreset(rawValue: promptPreset) ?? .polish
+    }
+
+    private var builtinPromptText: String {
+        AppConfig.builtinPrompt(selectedBuiltinPreset, english: UILang.isEnglish)
+    }
+
+    /// 是否已被用户覆写（非空且不等于任一语言的内置版）
+    private var isPresetCustomized: Bool {
+        guard let value = presetOverrides[promptPreset]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return false
+        }
+        return value != AppConfig.builtinPrompt(selectedBuiltinPreset, english: false)
+            && value != AppConfig.builtinPrompt(selectedBuiltinPreset, english: true)
+    }
+
+    /// 编辑器绑定：无覆写时显示内置全文，一旦修改即写入覆写
+    private var presetPromptBinding: Binding<String> {
+        Binding(
+            get: { presetOverrides[promptPreset] ?? builtinPromptText },
+            set: { presetOverrides[promptPreset] = $0 }
+        )
     }
 
     private var appVersion: String {
@@ -160,6 +189,37 @@ struct SettingsView: View {
                             .frame(height: 100)
                         Text(UILang.t("留空则回退到内置优化提示词",
                                       "Leave empty to fall back to the built-in refine prompt"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        // 内置场景：公布提示词全文，可直接修改（成为覆写版）
+                        HStack {
+                            Text(UILang.t("提示词", "Prompt"))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if isPresetCustomized {
+                                Text(UILang.t("已自定义", "Customized"))
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1.5)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                    .foregroundColor(.accentColor)
+                            }
+                            Spacer()
+                            if isPresetCustomized {
+                                Button(UILang.t("恢复默认", "Restore default")) {
+                                    presetOverrides.removeValue(forKey: promptPreset)
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                        TextEditor(text: presetPromptBinding)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .frame(height: 150)
+                            .id(promptPreset)
+                        Text(UILang.t(
+                            "直接修改即成为你的自定义版本（中/EN 模式共用）；恢复默认可随时回到内置提示词。注意保留 <input>/<feedback>/<append> 标签协议段，否则多轮纠偏会异常。",
+                            "Edits become your customized version (shared by 中/EN modes); Restore default reverts to the built-in prompt. Keep the <input>/<feedback>/<append> tag protocol or multi-round revision will break."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -337,6 +397,7 @@ struct SettingsView: View {
         if config.promptPreset == nil, !(config.systemPrompt ?? "").isEmpty {
             promptPreset = PromptPreset.custom.rawValue
         }
+        presetOverrides = config.presetOverrides ?? [:]
         appRows = (config.appPresets ?? [:])
             .sorted { $0.key < $1.key }
             .map { AppMappingRow(bundleID: $0.key, preset: $0.value) }
@@ -373,8 +434,23 @@ struct SettingsView: View {
             autoPaste: autoPaste,
             appPresets: mappings.isEmpty ? nil : mappings,
             glossary: glossaryLines.isEmpty ? nil : glossaryLines,
-            idlePrefetch: idlePrefetch
+            idlePrefetch: idlePrefetch,
+            presetOverrides: normalizedOverrides()
         )
+    }
+
+    /// 写盘前清洗：空的/与内置一致的覆写不落盘
+    private func normalizedOverrides() -> [String: String]? {
+        var out: [String: String] = [:]
+        for (key, value) in presetOverrides {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, let preset = PromptPreset(rawValue: key),
+                  preset != .custom,
+                  trimmed != AppConfig.builtinPrompt(preset, english: false),
+                  trimmed != AppConfig.builtinPrompt(preset, english: true) else { continue }
+            out[key] = trimmed
+        }
+        return out.isEmpty ? nil : out
     }
 
     private func save() {

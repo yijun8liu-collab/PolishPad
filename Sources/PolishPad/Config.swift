@@ -73,6 +73,9 @@ struct AppConfig: Codable {
     var glossary: [String]?
     /// 停顿预取：输入停顿时后台预先优化，回车秒出（默认开；有额外 token 消耗）
     var idlePrefetch: Bool? = nil
+    /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，
+    /// 中/EN 共用；删除/清空则恢复内置
+    var presetOverrides: [String: String]? = nil
 
     static let defaultSystemPrompt = """
     你是一个文本改写工具，不是 AI 助手。用户给你的文字是一份【消息草稿】——他准备把这段话发给别人（通常是某个 AI 助手）。你的唯一任务是把草稿改写得更清晰：理清逻辑、分点组织、补全指代，保留所有原始信息和意图。
@@ -269,18 +272,35 @@ struct AppConfig: Codable {
             + glossaryBlock(english: english)
     }
 
+    /// 各内置场景的出厂提示词（设置界面展示/恢复默认用）
+    static func builtinPrompt(_ preset: PromptPreset, english: Bool) -> String {
+        switch preset {
+        case .polish:
+            return english ? defaultSystemPromptEnglish : defaultSystemPrompt
+        case .slackEnglish:
+            return slackEnglishPrompt // 场景本身决定输出英文，与 中/EN 开关无关
+        case .formal:
+            return english ? formalPromptEN : formalPromptZH
+        case .concise:
+            return english ? concisePromptEN : concisePromptZH
+        case .custom:
+            return ""
+        }
+    }
+
     private func basePrompt(english: Bool, presetOverride: PromptPreset?) -> String {
         let preset = presetOverride
             ?? PromptPreset(rawValue: promptPreset ?? "polish") ?? .polish
+        // 用户覆写优先（自定义场景走自己的 systemPrompt 字段）
+        if preset != .custom,
+           let override = presetOverrides?[preset.rawValue]?
+               .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return override
+        }
         switch preset {
-        case .polish:
-            return english ? Self.defaultSystemPromptEnglish : Self.defaultSystemPrompt
-        case .slackEnglish:
-            return Self.slackEnglishPrompt // 场景本身决定输出英文，与 中/EN 开关无关
-        case .formal:
-            return english ? Self.formalPromptEN : Self.formalPromptZH
-        case .concise:
-            return english ? Self.concisePromptEN : Self.concisePromptZH
+        case .polish, .slackEnglish, .formal, .concise:
+            return Self.builtinPrompt(preset, english: english)
         case .custom:
             let custom = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if custom.isEmpty {
