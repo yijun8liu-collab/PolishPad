@@ -179,7 +179,8 @@ struct SettingsView: View {
                 Section(UILang.t("场景预设", "Scenario Preset")) {
                     HStack {
                         Picker(UILang.t("场景", "Scenario"), selection: $promptPreset) {
-                            ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                            ForEach(PromptPreset.allCases.filter { $0 != .custom },
+                                    id: \.rawValue) { preset in
                                 Text(UILang.t(preset.labelZH, preset.labelEN)).tag(preset.rawValue)
                             }
                             if !customScenarios.isEmpty {
@@ -229,15 +230,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                    if promptPreset == PromptPreset.custom.rawValue {
-                        TextEditor(text: $systemPrompt)
-                            .font(.system(size: 12))
-                            .frame(height: 100)
-                        Text(UILang.t("留空则回退到内置优化提示词",
-                                      "Leave empty to fall back to the built-in refine prompt"))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    } else {
+                    if true {
                         // 内置场景：公布提示词全文，可直接修改（成为覆写版）
                         HStack {
                             Text(UILang.t("提示词", "Prompt"))
@@ -280,7 +273,8 @@ struct SettingsView: View {
                                       prompt: Text("com.tinyspeck.slackmacgap"))
                                 .font(.system(size: 12))
                             Picker("", selection: $row.preset) {
-                                ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+                                ForEach(PromptPreset.allCases.filter { $0 != .custom },
+                                        id: \.rawValue) { preset in
                                     Text(UILang.t(preset.labelZH, preset.labelEN))
                                         .tag(preset.rawValue)
                                 }
@@ -449,6 +443,7 @@ struct SettingsView: View {
         }
         presetOverrides = config.presetOverrides ?? [:]
         customScenarios = config.customScenarios ?? []
+        if promptPreset == "custom" { promptPreset = "polish" }
         // 默认场景指向已删除的用户场景时回退
         if (config.promptPreset ?? "").hasPrefix("user:"),
            Scenario.from(key: config.promptPreset!, in: customScenarios)

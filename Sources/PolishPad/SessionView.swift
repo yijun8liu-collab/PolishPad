@@ -574,7 +574,8 @@ struct SessionView: View {
     /// 场景快切：内置预设 + 用户自定义场景
     private var presetMenu: some View {
         Menu {
-            ForEach(PromptPreset.allCases, id: \.rawValue) { preset in
+            ForEach(PromptPreset.allCases.filter { $0 != .custom },
+                    id: \.rawValue) { preset in
                 scenarioItem(.builtin(preset))
             }
             if !model.customScenarios.isEmpty {

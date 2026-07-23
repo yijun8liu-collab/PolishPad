@@ -397,6 +397,30 @@ enum ConfigStore {
         writeRaw(config)
     }
 
+    /// 旧版"自定义"预设迁移为用户场景：systemPrompt 非空则转成一个
+    /// 名为"自定义"的场景；选中/映射里的 "custom" 键同步改指向
+    static func migrateLegacyCustomPreset() {
+        guard var config = loadRaw() else { return }
+        let prompt = (config.systemPrompt ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let wasSelected = config.promptPreset == "custom"
+        let mappedKeys = (config.appPresets ?? [:]).filter { $0.value == "custom" }.keys
+        guard !prompt.isEmpty || wasSelected || !mappedKeys.isEmpty else { return }
+
+        var newKey = "polish"
+        if !prompt.isEmpty {
+            let scenario = CustomScenario(name: "自定义", prompt: prompt)
+            config.customScenarios = (config.customScenarios ?? []) + [scenario]
+            config.systemPrompt = nil
+            newKey = "user:" + scenario.id
+        } else {
+            config.systemPrompt = nil
+        }
+        if wasSelected { config.promptPreset = newKey }
+        for key in mappedKeys { config.appPresets?[key] = newKey }
+        writeRaw(config)
+    }
+
     static func writeRaw(_ config: AppConfig) {
         try? FileManager.default.createDirectory(
             at: configDirectory, withIntermediateDirectories: true)
