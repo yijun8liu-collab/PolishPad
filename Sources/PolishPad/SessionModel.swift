@@ -4,6 +4,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let polishPadThemeChanged = Notification.Name("PolishPad.themeChanged")
+    static let polishPadLanguageChanged = Notification.Name("PolishPad.languageChanged")
     static let polishPadPanelSizeChanged = Notification.Name("PolishPad.panelSizeChanged")
 }
 
@@ -58,7 +59,10 @@ final class SessionModel: ObservableObject {
     @Published var awaitingFirstChunk = false
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
-        didSet { UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish") }
+        didSet {
+            UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish")
+            NotificationCenter.default.post(name: .polishPadLanguageChanged, object: nil)
+        }
     }
     /// 明亮主题开关（默认暗色玻璃；记住上次选择，面板/HUD/设置窗一起跟随）
     @Published var lightTheme = UserDefaults.standard.bool(forKey: "lightTheme") {
@@ -109,6 +113,16 @@ final class SessionModel: ObservableObject {
         }
         speech.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+        // 设置窗口里的语言开关与面板开关是同一份状态：外部改动时跟随
+        NotificationCenter.default.addObserver(
+            forName: .polishPadLanguageChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let value = UserDefaults.standard.bool(forKey: "outputEnglish")
+                if value != self.outputEnglish { self.outputEnglish = value }
+            }
         }
         draftDebounce = $draft
             .removeDuplicates()

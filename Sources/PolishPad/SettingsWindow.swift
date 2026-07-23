@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var speechLocale = "zh-CN"
     @State private var autoPaste = true
     @State private var idlePrefetch = true
+    @State private var uiEnglish = UserDefaults.standard.bool(forKey: "outputEnglish")
     /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
     @State private var panelSizeChoice = "medium"
     @State private var systemPrompt = ""
@@ -96,6 +97,18 @@ struct SettingsView: View {
                 }
 
                 Section(UILang.t("行为", "Behavior")) {
+                    Picker(UILang.t("界面与输出语言", "UI & output language"),
+                           selection: $uiEnglish) {
+                        Text("中文").tag(false)
+                        Text("English").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: uiEnglish) { value in
+                        // 与面板右上角 中/EN 开关同一份状态，即改即生效
+                        UserDefaults.standard.set(value, forKey: "outputEnglish")
+                        NotificationCenter.default.post(
+                            name: .polishPadLanguageChanged, object: nil)
+                    }
                     Toggle(UILang.t("优化后自动粘贴回原应用", "Auto-paste result back into the app"),
                            isOn: $autoPaste)
                     Toggle(UILang.t("开机自启动", "Launch at login"), isOn: $launchAtLogin)
@@ -257,6 +270,10 @@ struct SettingsView: View {
         .frame(width: 540, height: 620)
         .onAppear(perform: load)
         .onReceive(windowWillClose) { _ in recorder.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: .polishPadLanguageChanged)) { _ in
+            let value = UserDefaults.standard.bool(forKey: "outputEnglish")
+            if value != uiEnglish { uiEnglish = value }
+        }
     }
 
     /// 开机自启动：注册/注销即时生效，状态由系统持有（不进 config.json）
