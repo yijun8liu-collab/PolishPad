@@ -45,6 +45,17 @@ enum SelfTest {
               Scenario.from(key: Scenario.user("sc1").keyString,
                             in: config.customScenarios ?? []) == .user("sc1"))
         config.customScenarios = nil
+        // 场景生成响应解析：裸 JSON / 代码围栏 / 前后杂讯 / 坏响应
+        check("scenarioGen.plain",
+              ScenarioGenerator.parse(#"{"name":"汇报","body":"你是一个工具"}"#)
+                  == .init(name: "汇报", body: "你是一个工具"))
+        check("scenarioGen.fenced",
+              ScenarioGenerator.parse("```json\n{\"name\":\"A\",\"body\":\"B\"}\n```")
+                  == .init(name: "A", body: "B"))
+        check("scenarioGen.noise",
+              ScenarioGenerator.parse("好的，这是结果：{\"name\":\"A\",\"body\":\"B\"} 希望有帮助")
+                  == .init(name: "A", body: "B"))
+        check("scenarioGen.bad", ScenarioGenerator.parse("抱歉我不能") == nil)
         config.promptPreset = "slack-english"
         check("preset.slack",
               config.resolvedSystemPrompt(english: false).contains("Slack"))

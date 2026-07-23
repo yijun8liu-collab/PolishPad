@@ -193,6 +193,10 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                         // menu 型 Picker 的选项文字有缓存，语言切换/增删场景时按身份重建
                         .id("\(uiEnglish)-\(customScenarios.count)")
+                        Button(UILang.t("✨ AI 生成…", "✨ AI generate…")) {
+                            promptForScenarioDescription()
+                        }
+                        .controlSize(.small)
                         Button(UILang.t("＋ 新建场景", "＋ New scenario")) {
                             let scenario = CustomScenario(
                                 name: UILang.t("新场景", "New scenario"), prompt: "")
@@ -515,6 +519,42 @@ struct SettingsView: View {
             return out
         }
         return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// 一句话生成场景（NSAlert 输入 → AI 生成 → 立即持久化并选中）
+    private func promptForScenarioDescription() {
+        let alert = NSAlert()
+        alert.messageText = UILang.t("用一句话描述你的场景",
+                                     "Describe your scenario in a sentence")
+        alert.informativeText = UILang.t(
+            "AI 会生成场景名与提示词，多轮纠偏协议自动附加。",
+            "AI generates the name & prompt; the multi-round protocol is appended automatically.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        field.placeholderString = UILang.t("例如：把技术方案翻译成给老板看的大白话汇报",
+                                           "e.g. plain-language updates for my boss")
+        alert.accessoryView = field
+        alert.addButton(withTitle: UILang.t("生成", "Generate"))
+        alert.addButton(withTitle: UILang.t("取消", "Cancel"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let description = field.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty else { return }
+        statusMessage = UILang.t("场景生成中…", "Generating scenario…")
+        statusIsError = false
+        Task { @MainActor in
+            do {
+                let scenario = try await ScenarioGenerator.generateAndSave(description)
+                customScenarios = ConfigStore.loadRaw()?.customScenarios ?? customScenarios
+                promptPreset = "user:" + scenario.id
+                statusMessage = UILang.t("场景「\(scenario.name)」已生成",
+                                         "Scenario \"\(scenario.name)\" generated")
+                NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
+            } catch {
+                statusMessage = error.localizedDescription
+                statusIsError = true
+            }
+        }
     }
 
     private func save() {

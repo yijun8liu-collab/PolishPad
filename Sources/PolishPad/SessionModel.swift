@@ -64,6 +64,10 @@ final class SessionModel: ObservableObject {
     @Published var panelVisible = false
     /// 本轮蜕变动画的旧文字（首轮=草稿，纠偏轮=上一版结果）
     @Published var morphSource = ""
+    /// 一句话生成场景：创建器开关 / 描述 / 生成中
+    @Published var showScenarioCreator = false
+    @Published var scenarioDescription = ""
+    @Published var isGeneratingScenario = false
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet {
@@ -229,6 +233,31 @@ final class SessionModel: ObservableObject {
         activeScenario = Scenario.from(key: raw, in: customScenarios)
         let name = appName ?? bundleID
         autoPresetNote = t("已按 \(name) 自动选择", "Auto-selected for \(name)")
+    }
+
+    /// 一句话生成场景：成功后立即选用
+    func generateScenario() {
+        let description = scenarioDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty, !isGeneratingScenario else { return }
+        isGeneratingScenario = true
+        Task { [weak self] in
+            defer { self?.isGeneratingScenario = false }
+            do {
+                let scenario = try await ScenarioGenerator.generateAndSave(description)
+                guard let self else { return }
+                self.customScenarios = ConfigStore.loadRaw()?.customScenarios
+                    ?? self.customScenarios
+                self.activeScenario = .user(scenario.id)
+                self.showScenarioCreator = false
+                self.scenarioDescription = ""
+                self.autoPresetNote = nil
+                self.statusText = self.t("场景「\(scenario.name)」已创建并选用",
+                                         "Scenario \"\(scenario.name)\" created & selected")
+            } catch {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// 当前场景的显示名

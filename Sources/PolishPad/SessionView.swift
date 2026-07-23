@@ -55,6 +55,68 @@ struct SessionView: View {
                 )
         )
         .overlay(hiddenShortcuts)
+        .overlay {
+            if model.showScenarioCreator { scenarioCreatorCard }
+        }
+    }
+
+    // MARK: - 一句话创建场景
+
+    private var scenarioCreatorCard: some View {
+        VStack(spacing: 12) {
+            Text(model.t("用一句话描述你的场景", "Describe your scenario in a sentence"))
+                .font(.system(size: 13, weight: .semibold))
+            TextField(
+                model.t("例如：把技术方案翻译成给老板看的大白话汇报",
+                        "e.g. turn technical plans into plain-language updates for my boss"),
+                text: $model.scenarioDescription,
+                axis: .vertical
+            )
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(2...4)
+            .frame(width: 330)
+            .onSubmit { model.generateScenario() }
+            HStack(spacing: 10) {
+                Button(model.t("取消", "Cancel")) {
+                    model.showScenarioCreator = false
+                    model.scenarioDescription = ""
+                }
+                .disabled(model.isGeneratingScenario)
+                Button {
+                    model.generateScenario()
+                } label: {
+                    if model.isGeneratingScenario {
+                        HStack(spacing: 5) {
+                            ProgressView().controlSize(.small)
+                            Text(model.t("生成中…", "Generating…"))
+                        }
+                    } else {
+                        Text(model.t("✨ 生成场景", "✨ Generate"))
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isGeneratingScenario || model.scenarioDescription
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Text(model.t("AI 会生成场景名与提示词，多轮纠偏协议自动附加；生成后可在设置中查看和修改",
+                         "AI generates the name & prompt; the multi-round protocol is appended automatically. Edit later in Settings."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .frame(width: 330)
+                .multilineTextAlignment(.center)
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(model.lightTheme
+                    ? Color.white.opacity(0.97)
+                    : Color(red: 0.13, green: 0.14, blue: 0.16).opacity(0.98))
+                .shadow(radius: 24, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12))
+        )
     }
 
     // MARK: - 头栏：左上角关闭（mac 习惯），兼作拖动区
@@ -578,6 +640,13 @@ struct SessionView: View {
                 ForEach(model.customScenarios) { scenario in
                     scenarioItem(.user(scenario.id))
                 }
+            }
+            Divider()
+            Button {
+                model.showScenarioCreator = true
+            } label: {
+                Label(model.t("✨ 描述创建新场景…", "✨ Describe a new scenario…"),
+                      systemImage: "sparkles")
             }
         } label: {
             HStack(spacing: 3) {
