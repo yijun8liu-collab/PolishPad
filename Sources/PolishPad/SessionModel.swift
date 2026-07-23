@@ -125,12 +125,20 @@ final class SessionModel: ObservableObject {
         speech.onError = { [weak self] message in
             self?.errorMessage = message
         }
-        // 设置保存后刷新用户场景列表（面板开着时菜单同步最新）
+        // 设置保存后刷新用户场景列表（面板开着时菜单同步最新）；
+        // 当前选中的场景被删除时回退到配置的默认场景
         NotificationCenter.default.addObserver(
             forName: .polishPadSettingsSaved, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.customScenarios = ConfigStore.loadRaw()?.customScenarios ?? []
+                guard let self else { return }
+                self.customScenarios = ConfigStore.loadRaw()?.customScenarios ?? []
+                if case let .user(id) = self.activeScenario,
+                   !self.customScenarios.contains(where: { $0.id == id }) {
+                    self.activeScenario = Scenario.from(
+                        key: ConfigStore.loadRaw()?.promptPreset ?? "polish",
+                        in: self.customScenarios)
+                }
             }
         }
         // 设置窗口里的语言开关与面板开关是同一份状态：外部改动时跟随
