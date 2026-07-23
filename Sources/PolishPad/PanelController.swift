@@ -14,6 +14,9 @@ final class PanelController {
     private var previousApp: NSRunningApplication?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
     private var lastPastedText: String?
+    /// 面板可见期间阻止 App Nap：否则在别的应用里输入时（本应用后台）
+    /// 粒子/蜕变动画的渲染定时器会被系统冻结
+    private var activityToken: NSObjectProtocol?
 
     init() {
         panel = KeyablePanel(
@@ -127,13 +130,26 @@ final class PanelController {
         }
 
         model.panelVisible = true
+        if activityToken == nil {
+            activityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated],
+                reason: "PolishPad panel visible — keep animations running")
+        }
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
     }
 
+    private func endVisibilityActivity() {
+        if let token = activityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            activityToken = nil
+        }
+    }
+
     func hide() {
         model.panelVisible = false
+        endVisibilityActivity()
         model.stopDictation()
         // 与 Esc/红点语义一致：关窗即取消进行中的请求——
         // 否则请求在后台跑完会静默覆盖用户剪贴板
@@ -213,6 +229,7 @@ final class PanelController {
     func hideAndPaste(replacePrevious: Bool = false) {
         let target = previousApp
         model.panelVisible = false
+        endVisibilityActivity()
         model.stopDictation()
         panel.orderOut(nil)
         previousApp = nil
