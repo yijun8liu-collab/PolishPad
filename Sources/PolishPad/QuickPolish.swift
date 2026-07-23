@@ -171,6 +171,19 @@ final class QuickPolishController {
                     HUD.shared.updateWorking(UILang.t("优化中… \(count) 字", "Refining… \(count) chars"))
                 }
             }
+            // 等 API 的这几秒里用户可能切走了窗口：目标应用不再前台就不盲贴，
+            // 结果留在剪贴板降级为手动粘贴（克制：不激活抢焦点、不跟踪元素）
+            if let app = targetApp,
+               NSWorkspace.shared.frontmostApplication?.processIdentifier
+                   != app.processIdentifier {
+                pasteboard.clearContents()
+                pasteboard.setString(output, forType: .string)
+                onStateChange?(.idle)
+                HUD.shared.flashSuccess(UILang.t(
+                    "已复制（原窗口已切走，请手动粘贴）",
+                    "Copied (window changed — paste manually)"))
+                return
+            }
             pasteboard.clearContents()
             pasteboard.setString(output, forType: .string)
             KeySimulator.postCommandKey(KeySimulator.keyV)
