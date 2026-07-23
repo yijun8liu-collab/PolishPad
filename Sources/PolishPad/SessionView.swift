@@ -401,7 +401,7 @@ struct SessionView: View {
         }
         if model.phase == .composing {
             return [
-                HintItem(keys: ["↩"], label: model.t("优化", "refine")),
+                HintItem(keys: ["↩"], label: submitVerb),
                 HintItem(keys: ["⇧↩"], label: model.t("换行", "newline")),
             ]
         }
@@ -409,6 +409,17 @@ struct SessionView: View {
             HintItem(keys: ["↩"], label: model.t("替换 · 留空完成", "replace · empty = done")),
             HintItem(keys: ["⌘[", "⌘]"], label: model.t("版本", "versions")),
         ]
+    }
+
+    /// 回车动作的动词跟随当前场景（Slack=翻译、正式/精简各有其名）
+    private var submitVerb: String {
+        switch model.activePreset {
+        case .polish: return model.t("优化", "refine")
+        case .slackEnglish: return model.t("翻译", "translate")
+        case .formal: return model.t("正式化", "formalize")
+        case .concise: return model.t("精简", "condense")
+        case .custom: return model.t("处理", "process")
+        }
     }
 
     private var hintView: some View {
