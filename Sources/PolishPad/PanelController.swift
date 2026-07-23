@@ -30,7 +30,7 @@ final class PanelController {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        panel.contentMinSize = NSSize(width: 520, height: 320)
+        panel.contentMinSize = NSSize(width: 440, height: 280)
         // 拖拽调整后记住尺寸（下次唤起沿用）
         NotificationCenter.default.addObserver(
             forName: NSWindow.didEndLiveResizeNotification, object: panel, queue: .main

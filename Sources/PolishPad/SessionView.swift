@@ -25,8 +25,8 @@ struct SessionView: View {
 
             bottomBar
         }
-        .frame(minWidth: 520, maxWidth: .infinity,
-               minHeight: 320, maxHeight: .infinity)
+        .frame(minWidth: 440, maxWidth: .infinity,
+               minHeight: 280, maxHeight: .infinity)
         .background(
             ZStack {
                 VisualEffectBackground(light: model.lightTheme)
@@ -383,7 +383,10 @@ struct SessionView: View {
 
             Spacer()
 
-            hintView
+            ViewThatFits(in: .horizontal) {
+                hintView
+                Color.clear.frame(width: 1, height: 1)
+            }
 
             Button {
                 model.lightTheme.toggle()
