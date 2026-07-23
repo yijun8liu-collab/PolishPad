@@ -151,24 +151,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let openItem = NSMenuItem(
-            title: "打开优化窗口（\(panelHotkeySpec)）",
+            title: "打开优化窗口",
             action: #selector(togglePanel), keyEquivalent: ""
         )
         openItem.target = self
+        applyHotkeyDisplay(openItem, spec: panelHotkeySpec)
         menu.addItem(openItem)
 
         // 点击状态栏菜单不会切走目标应用的焦点，所以这两项可以直接作用于当前应用
         let selectionItem = NSMenuItem(
-            title: "优化选中文本（\(selectionHotkeySpec)）",
+            title: "优化选中文本",
             action: #selector(polishSelectionFromMenu), keyEquivalent: ""
         )
         selectionItem.target = self
+        applyHotkeyDisplay(selectionItem, spec: selectionHotkeySpec)
         menu.addItem(selectionItem)
         let allItem = NSMenuItem(
-            title: "全选优化替换（\(allHotkeySpec)）",
+            title: "全选优化替换",
             action: #selector(polishAllFromMenu), keyEquivalent: ""
         )
         allItem.target = self
+        applyHotkeyDisplay(allItem, spec: allHotkeySpec)
         menu.addItem(allItem)
 
         menu.addItem(.separator())
@@ -203,6 +206,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ))
         menu.delegate = self
         return menu
+    }
+
+    /// 把 "ctrl+option+space" 这类热键串转成菜单项右侧的原生快捷键显示（⌃⌥Space）
+    private func applyHotkeyDisplay(_ item: NSMenuItem, spec: String) {
+        let parts = spec.lowercased().split(separator: "+").map(String.init)
+        guard let keyName = parts.last, parts.count > 1 else { return }
+        var flags: NSEvent.ModifierFlags = []
+        for modifier in parts.dropLast() {
+            switch modifier {
+            case "cmd", "command": flags.insert(.command)
+            case "option", "opt", "alt": flags.insert(.option)
+            case "ctrl", "control": flags.insert(.control)
+            case "shift": flags.insert(.shift)
+            default: break
+            }
+        }
+        let key: String
+        switch keyName {
+        case "space": key = " "
+        case "return": key = "\r"
+        case "tab": key = "\t"
+        case "delete": key = "\u{8}"
+        case "left": key = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        case "right": key = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+        case "up": key = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        case "down": key = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        default:
+            if keyName.count == 1 {
+                key = keyName
+            } else if keyName.hasPrefix("f"), let n = Int(keyName.dropFirst()),
+                      (1...12).contains(n),
+                      let scalar = UnicodeScalar(NSF1FunctionKey + n - 1) {
+                key = String(scalar)
+            } else {
+                return // 认不出的键名：不显示快捷键，标题保持干净
+            }
+        }
+        item.keyEquivalent = key
+        item.keyEquivalentModifierMask = flags
     }
 
     /// 历史子菜单：每条会话展开各版本，点击复制
