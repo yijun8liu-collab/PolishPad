@@ -3,7 +3,20 @@
 set -e
 cd "$(dirname "$0")"
 
-swift build -c release
+# UNIVERSAL=1 ./build.sh 构建 Intel+Apple Silicon 通用包（发布用）。
+# 用 --triple 分别构建再 lipo 合并：--arch 双架构需要完整 Xcode
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+    swift build -c release --triple arm64-apple-macosx13.0
+    swift build -c release --triple x86_64-apple-macosx13.0
+    lipo -create \
+        .build/arm64-apple-macosx/release/PolishPad \
+        .build/x86_64-apple-macosx/release/PolishPad \
+        -output .build/PolishPad-universal
+    BIN=.build/PolishPad-universal
+else
+    swift build -c release
+    BIN=.build/release/PolishPad
+fi
 
 APP=PolishPad.app
 rm -rf "$APP"
@@ -23,7 +36,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.5.0</string>
+    <string>0.6.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>CFBundleIconFile</key>
@@ -77,7 +90,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-cp .build/release/PolishPad "$APP/Contents/MacOS/PolishPad"
+cp "$BIN" "$APP/Contents/MacOS/PolishPad"
 mkdir -p "$APP/Contents/Resources"
 cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
