@@ -3,6 +3,23 @@ import SwiftUI
 
 extension Notification.Name {
     static let polishPadThemeChanged = Notification.Name("PolishPad.themeChanged")
+    static let polishPadPanelSizeChanged = Notification.Name("PolishPad.panelSizeChanged")
+}
+
+/// 面板尺寸：UserDefaults 记忆（拖拽调整或设置预设都会更新）
+enum PanelSize {
+    static let presets: [(name: String, w: CGFloat, h: CGFloat)] = [
+        ("small", 560, 340), ("medium", 680, 400), ("large", 820, 500),
+    ]
+    static var current: NSSize {
+        let w = UserDefaults.standard.double(forKey: "panelWidth")
+        let h = UserDefaults.standard.double(forKey: "panelHeight")
+        return NSSize(width: w > 0 ? w : 680, height: h > 0 ? h : 400)
+    }
+    static func store(_ size: NSSize) {
+        UserDefaults.standard.set(Double(size.width), forKey: "panelWidth")
+        UserDefaults.standard.set(Double(size.height), forKey: "panelHeight")
+    }
 }
 
 @MainActor

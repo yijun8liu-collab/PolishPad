@@ -25,14 +25,15 @@ struct SessionView: View {
 
             bottomBar
         }
-        .frame(width: 680, height: 400)
+        .frame(minWidth: 520, maxWidth: .infinity,
+               minHeight: 320, maxHeight: .infinity)
         .background(
             ZStack {
                 VisualEffectBackground(light: model.lightTheme)
                 // 垫色层：暗色把 HUD 玻璃提到炭灰；明亮加厚成乳白磨砂
                 LinearGradient(
                     colors: model.lightTheme
-                        ? [Color.white.opacity(0.60), Color.white.opacity(0.34)]
+                        ? [Color.white.opacity(0.32), Color.white.opacity(0.14)]
                         : [Color.white.opacity(0.11), Color.white.opacity(0.045)],
                     startPoint: .top, endPoint: .bottom
                 )
@@ -603,13 +604,11 @@ struct VisualEffectBackground: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = light ? .popover : .hudWindow
+        view.material = .hudWindow  // aqua 外观下即浅色通透玻璃
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = light ? .popover : .hudWindow
-    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }

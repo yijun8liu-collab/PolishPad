@@ -18,7 +18,7 @@ final class PanelController {
     init() {
         panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 300),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: true
         )
@@ -30,6 +30,22 @@ final class PanelController {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
+        panel.contentMinSize = NSSize(width: 520, height: 320)
+        // 拖拽调整后记住尺寸（下次唤起沿用）
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                PanelSize.store(self.panel.frame.size)
+            }
+        }
+        // 设置里选了预设档位：立即应用（可见时锚定顶边变化）
+        NotificationCenter.default.addObserver(
+            forName: .polishPadPanelSizeChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyStoredSize() }
+        }
         // 玻璃主题：暗色（默认）或明亮，由面板按钮切换、UserDefaults 记忆
         applyTheme()
         NotificationCenter.default.addObserver(
@@ -59,6 +75,16 @@ final class PanelController {
         }
     }
 
+    private func applyStoredSize() {
+        let size = PanelSize.current
+        guard panel.isVisible else { return }
+        let frame = panel.frame
+        panel.setFrame(
+            NSRect(x: frame.midX - size.width / 2, y: frame.maxY - size.height,
+                   width: size.width, height: size.height),
+            display: true, animate: true)
+    }
+
     private func applyTheme() {
         let light = UserDefaults.standard.bool(forKey: "lightTheme")
         panel.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
@@ -85,6 +111,8 @@ final class PanelController {
             appName: previousApp?.localizedName
         )
 
+        // 应用记忆的尺寸（拖拽或设置预设），再定位
+        panel.setContentSize(PanelSize.current)
         // 出现在鼠标所在屏幕，类 Spotlight 位置（水平居中，偏上）
         panel.layoutIfNeeded()
         let mouse = NSEvent.mouseLocation

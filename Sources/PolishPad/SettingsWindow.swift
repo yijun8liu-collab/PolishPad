@@ -26,6 +26,8 @@ struct SettingsView: View {
     @State private var hotkeyAll = "ctrl+option+a"
     @State private var speechLocale = "zh-CN"
     @State private var autoPaste = true
+    /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
+    @State private var panelSizeChoice = "medium"
     @State private var systemPrompt = ""
     @State private var showKey = false
     @State private var statusMessage = ""
@@ -99,6 +101,15 @@ struct SettingsView: View {
                         .onChange(of: launchAtLogin) { enabled in
                             setLaunchAtLogin(enabled)
                         }
+                    Picker(UILang.t("面板大小", "Panel size"), selection: $panelSizeChoice) {
+                        Text(UILang.t("小", "Small")).tag("small")
+                        Text(UILang.t("中", "Medium")).tag("medium")
+                        Text(UILang.t("大", "Large")).tag("large")
+                        if panelSizeChoice == "custom" {
+                            Text(UILang.t("自定义（拖拽调整）", "Custom (dragged)")).tag("custom")
+                        }
+                    }
+                    .pickerStyle(.segmented)
                     TextField(UILang.t("语音识别语言", "Speech locale"), text: $speechLocale,
                               prompt: Text("zh-CN"))
                 }
@@ -276,6 +287,10 @@ struct SettingsView: View {
         hotkeyAll = config.hotkeyPolishAll ?? "ctrl+option+a"
         speechLocale = config.speechLocale ?? "zh-CN"
         autoPaste = config.autoPaste ?? true
+        let size = PanelSize.current
+        panelSizeChoice = PanelSize.presets.first {
+            abs($0.w - size.width) < 2 && abs($0.h - size.height) < 2
+        }?.name ?? "custom"
         systemPrompt = config.systemPrompt ?? ""
         promptPreset = config.promptPreset ?? "polish"
         // 老配置：之前填过自定义提示词的用户视为自定义场景
@@ -342,6 +357,10 @@ struct SettingsView: View {
                 [.posixPermissions: 0o600], ofItemAtPath: ConfigStore.configURL.path)
             statusMessage = UILang.t("✅ 已保存", "✅ Saved")
             statusIsError = false
+            if let preset = PanelSize.presets.first(where: { $0.name == panelSizeChoice }) {
+                PanelSize.store(NSSize(width: preset.w, height: preset.h))
+                NotificationCenter.default.post(name: .polishPadPanelSizeChanged, object: nil)
+            }
             NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
             // 保存成功即自动关窗（失败时留在原地显示错误）；用 HUD 补一个确认
             HUD.shared.flashSuccess(UILang.t("设置已保存", "Settings saved"))
