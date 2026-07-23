@@ -39,6 +39,11 @@ struct SettingsView: View {
     @State private var checkingUpdate = false
     @State private var launchAtLogin = false
     @StateObject private var recorder = HotkeyRecorderCoordinator()
+    /// 任何窗口关闭都停一次录制（幂等）：录制中直接关设置窗时，
+    /// 必须恢复全局热键并摘掉吞键的本地监听，否则热键失效、面板打不出字
+    private var windowWillClose: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+    }
 
     private var appVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
@@ -232,6 +237,7 @@ struct SettingsView: View {
         }
         .frame(width: 540, height: 620)
         .onAppear(perform: load)
+        .onReceive(windowWillClose) { _ in recorder.stop() }
     }
 
     /// 开机自启动：注册/注销即时生效，状态由系统持有（不进 config.json）
