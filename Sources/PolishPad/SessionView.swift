@@ -4,8 +4,12 @@ import SwiftUI
 struct SessionView: View {
     @ObservedObject var model: SessionModel
 
+    @State private var hoveringClose = false
+
     var body: some View {
         VStack(spacing: 0) {
+            headerBar
+
             if model.phase == .composing {
                 composerArea
             } else {
@@ -46,6 +50,35 @@ struct SessionView: View {
         .overlay(hiddenShortcuts)
     }
 
+    // MARK: - 头栏：左上角关闭（mac 习惯），兼作拖动区
+
+    private var headerBar: some View {
+        HStack {
+            Button {
+                model.forceClose()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 1.0, green: 0.37, blue: 0.34))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.15)))
+                        .frame(width: 12, height: 12)
+                    if hoveringClose {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(Color.black.opacity(0.55))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringClose = $0 }
+            .help(model.t("关闭（Esc）", "Close (Esc)"))
+            Spacer()
+        }
+        .padding(.leading, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+    }
+
     // MARK: - 组稿态：一整块无边框输入区
 
     private var composerArea: some View {
@@ -59,7 +92,7 @@ struct SessionView: View {
                 onSubmit: { model.submitDraft() },
                 onCancel: { model.handleEscape() }
             )
-            .frame(height: 190)
+            .frame(height: 176)
 
             if model.draft.isEmpty {
                 Text(model.t("输入要优化的内容…", "Type what you want refined…"))
@@ -349,16 +382,6 @@ struct SessionView: View {
                 .foregroundColor(Color.secondary.opacity(0.6))
 
             overflowMenu
-
-            Button {
-                model.forceClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundColor(Color.secondary.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-            .help(model.t("关闭（Esc）", "Close (Esc)"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
