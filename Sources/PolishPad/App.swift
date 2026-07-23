@@ -151,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let openItem = NSMenuItem(
-            title: "打开优化窗口",
+            title: UILang.t("打开优化窗口", "Open Panel"),
             action: #selector(togglePanel), keyEquivalent: ""
         )
         openItem.target = self
@@ -160,14 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 点击状态栏菜单不会切走目标应用的焦点，所以这两项可以直接作用于当前应用
         let selectionItem = NSMenuItem(
-            title: "优化选中文本",
+            title: UILang.t("优化选中文本", "Refine Selection"),
             action: #selector(polishSelectionFromMenu), keyEquivalent: ""
         )
         selectionItem.target = self
         applyHotkeyDisplay(selectionItem, spec: selectionHotkeySpec)
         menu.addItem(selectionItem)
         let allItem = NSMenuItem(
-            title: "全选优化替换",
+            title: UILang.t("全选优化替换", "Select-All Refine"),
             action: #selector(polishAllFromMenu), keyEquivalent: ""
         )
         allItem.target = self
@@ -176,32 +176,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         let restoreItem = NSMenuItem(
-            title: "还原上次替换", action: #selector(restoreLastReplacement), keyEquivalent: ""
+            title: UILang.t("还原上次替换", "Undo Last Replacement"), action: #selector(restoreLastReplacement), keyEquivalent: ""
         )
         restoreItem.target = self
         menu.addItem(restoreItem)
 
-        let historyItem = NSMenuItem(title: "历史", action: nil, keyEquivalent: "")
+        let historyItem = NSMenuItem(title: UILang.t("历史", "History"), action: nil, keyEquivalent: "")
         historyItem.submenu = buildHistoryMenu()
         menu.addItem(historyItem)
         self.historyMenuItem = historyItem
 
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(
-            title: "设置…", action: #selector(openSettings), keyEquivalent: ""
+            title: UILang.t("设置…", "Settings…"), action: #selector(openSettings), keyEquivalent: ""
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
 
         let configItem = NSMenuItem(
-            title: "打开配置文件", action: #selector(openConfig), keyEquivalent: ""
+            title: UILang.t("打开配置文件", "Open Config File"), action: #selector(openConfig), keyEquivalent: ""
         )
         configItem.target = self
         menu.addItem(configItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
-            title: "退出 PolishPad",
+            title: UILang.t("退出 PolishPad", "Quit PolishPad"),
             action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
         ))
         menu.delegate = self
@@ -252,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         let records = HistoryStore.shared.records
         if records.isEmpty {
-            let empty = NSMenuItem(title: "暂无记录", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: UILang.t("暂无记录", "No records"), action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
             return menu
@@ -278,7 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             sub.addItem(.separator())
             let originalItem = NSMenuItem(
-                title: "复制原文", action: #selector(copyHistoryText(_:)), keyEquivalent: "")
+                title: UILang.t("复制原文", "Copy Original"), action: #selector(copyHistoryText(_:)), keyEquivalent: "")
             originalItem.target = self
             originalItem.representedObject = record.original
             sub.addItem(originalItem)
@@ -323,11 +323,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
-    /// 每次打开菜单时刷新历史子菜单
+    /// 每次打开菜单时整体重建：历史子菜单保持最新，
+    /// 文案跟随面板的 中/EN 开关即时切换
     nonisolated func menuWillOpen(_ menu: NSMenu) {
         MainActor.assumeIsolated {
             guard menu === statusItem.menu else { return }
-            historyMenuItem?.submenu = buildHistoryMenu()
+            let fresh = buildMenu()
+            let items = fresh.items
+            fresh.items = []
+            menu.items = items
         }
     }
 
