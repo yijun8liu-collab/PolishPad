@@ -95,6 +95,9 @@ final class PanelController {
 
     func hide() {
         model.stopDictation()
+        // 与 Esc/红点语义一致：关窗即取消进行中的请求——
+        // 否则请求在后台跑完会静默覆盖用户剪贴板
+        model.cancelRequest()
         panel.orderOut(nil)
         // 焦点还给唤起前的应用，方便直接 ⌘V
         if let app = previousApp, !app.isTerminated {
