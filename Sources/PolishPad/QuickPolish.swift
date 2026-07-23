@@ -171,6 +171,12 @@ final class QuickPolishController {
                     HUD.shared.updateWorking(UILang.t("优化中… \(count) 字", "Refining… \(count) chars"))
                 }
             }
+            // 原文进持久化历史（菜单栏→历史 可找回）：划词替换是破坏性操作，
+            // "还原上次替换"只存最近一次，历史是唯一可靠的原文备份
+            HistoryStore.shared.upsert(
+                id: UUID(), original: input, versions: [output],
+                preset: ConfigStore.loadRaw()?.promptPreset ?? "polish")
+
             // 等 API 的这几秒里用户可能切走了窗口：目标应用不再前台就不盲贴，
             // 结果留在剪贴板降级为手动粘贴（克制：不激活抢焦点、不跟踪元素）
             if let app = targetApp,
