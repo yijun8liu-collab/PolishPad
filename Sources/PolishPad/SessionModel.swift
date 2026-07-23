@@ -60,6 +60,8 @@ final class SessionModel: ObservableObject {
     /// 面板是否可见（由 PanelController 维护）：粒子层只在可见时渲染，
     /// 否则 TimelineView 在隐藏窗口里空转耗电
     @Published var panelVisible = false
+    /// 本轮蜕变动画的旧文字（首轮=草稿，纠偏轮=上一版结果）
+    @Published var morphSource = ""
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet {
@@ -356,6 +358,10 @@ final class SessionModel: ObservableObject {
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
         awaitingFirstChunk = true
+        // 蜕变动画的源文本：旧文字将逐字变成流式到达的新文字
+        morphSource = currentResult.isEmpty
+            ? draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            : currentResult
         errorMessage = nil
         showDiff = false
         statusText = t("优化中…（Esc 取消）", "Refining… (Esc to cancel)")

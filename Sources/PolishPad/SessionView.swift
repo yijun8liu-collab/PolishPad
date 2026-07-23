@@ -38,10 +38,11 @@ struct SessionView: View {
                     startPoint: .top, endPoint: .bottom
                 )
                 // 神经脉冲氛围层：待机低透明度漂移，等待首字时亮起发脉冲
+                // 明亮模式不用粒子（等待动画为逐字蜕变）；暗色保留 Neural 氛围
                 NeuralBackgroundView(
                     surge: model.isLoading && model.awaitingFirstChunk,
                     light: model.lightTheme,
-                    active: model.panelVisible)
+                    active: model.panelVisible && !model.lightTheme)
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
@@ -125,16 +126,14 @@ struct SessionView: View {
             if model.showDiff {
                 diffView
                     .frame(maxHeight: .infinity)
-            } else if model.awaitingFirstChunk, model.currentResult.isEmpty {
-                // 让位给背景的神经脉冲动画，只叠一行居中小标签
-                VStack {
-                    Spacer()
-                    Text(model.t("神经网络思考中…", "Neural network thinking…"))
-                        .font(.system(size: 11))
-                        .foregroundColor(Color.secondary.opacity(0.65))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.isLoading,
+                      model.morphSource.count + model.currentResult.count < 700 {
+                // 原地逐字蜕变：等待期旧文字飘舞，流式到达后从左往右逐字定稿。
+                // 超长文本（视图数过多）回退到普通流式显示
+                TransmuteView(
+                    source: model.morphSource,
+                    output: model.awaitingFirstChunk ? "" : model.currentResult)
+                    .frame(maxHeight: .infinity)
             } else {
                 // 结果区支持直接点击快速编辑（流式/录音期间锁定）；
                 // 回车在这里是普通换行，不触发提交
@@ -147,8 +146,6 @@ struct SessionView: View {
                     submitOnEnter: false
                 )
                 .frame(maxHeight: .infinity)
-                // 纠偏轮等待首字时旧文变暗，示意"正在重写这段"
-                .opacity(model.awaitingFirstChunk ? 0.5 : 1)
             }
 
             Divider()
