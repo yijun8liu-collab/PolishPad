@@ -38,11 +38,6 @@ struct SessionView: View {
                     startPoint: .top, endPoint: .bottom
                 )
                 // 神经脉冲氛围层：待机低透明度漂移，等待首字时亮起发脉冲
-                // 明亮模式不用粒子（等待动画为逐字蜕变）；暗色保留 Neural 氛围
-                NeuralBackgroundView(
-                    surge: model.isLoading && model.awaitingFirstChunk,
-                    light: model.lightTheme,
-                    active: model.panelVisible && !model.lightTheme)
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
