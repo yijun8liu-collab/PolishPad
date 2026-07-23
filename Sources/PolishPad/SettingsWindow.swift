@@ -258,7 +258,7 @@ struct SettingsView: View {
         if rawKey == ConfigStore.placeholderKey || rawKey.isEmpty {
             apiKey = ""
         } else if rawKey == ConfigStore.keychainSentinel {
-            apiKey = KeychainStore.get() ?? ""
+            apiKey = ""  // 反向迁移未完成的残留哨兵：请用户重填
         } else {
             apiKey = rawKey
         }
@@ -282,16 +282,10 @@ struct SettingsView: View {
         glossaryText = (config.glossary ?? []).joined(separator: "\n")
     }
 
-    /// includeRealKey：true 用于运行时测试；false 用于写盘（key 进 Keychain，JSON 留哨兵）
-    private func buildConfig(includeRealKey: Bool) -> AppConfig {
+    private func buildConfig(includeRealKey: Bool = true) -> AppConfig {
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jsonKey: String
-        if key.isEmpty {
-            jsonKey = ConfigStore.placeholderKey
-        } else {
-            jsonKey = includeRealKey ? key : ConfigStore.keychainSentinel
-        }
+        let jsonKey = key.isEmpty ? ConfigStore.placeholderKey : key
         var mappings: [String: String] = [:]
         for row in appRows {
             let bundleID = row.bundleID.trimmingCharacters(in: .whitespaces)
@@ -332,19 +326,15 @@ struct SettingsView: View {
             }
         }
         do {
-            // key 存 Keychain，JSON 只留哨兵
-            let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !key.isEmpty {
-                KeychainStore.set(key)
-            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-            let data = try encoder.encode(buildConfig(includeRealKey: false))
+            let data = try encoder.encode(buildConfig())
             try FileManager.default.createDirectory(
                 at: ConfigStore.configDirectory, withIntermediateDirectories: true)
             try data.write(to: ConfigStore.configURL)
-            statusMessage = UILang.t("✅ 已保存（API Key 已存入钥匙串）",
-                                     "✅ Saved (API key stored in Keychain)")
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: ConfigStore.configURL.path)
+            statusMessage = UILang.t("✅ 已保存", "✅ Saved")
             statusIsError = false
             NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
         } catch {

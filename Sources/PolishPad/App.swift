@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
-        ConfigStore.migrateKeyToKeychainIfNeeded()
+        ConfigStore.migrateKeyFromKeychainIfNeeded()
         setupMainMenu()
         panelController = PanelController()
         setupQuickPolish()

@@ -258,16 +258,18 @@ enum ConfigStore {
     }
 
     static let placeholderKey = "在这里填入你的 API Key"
-    /// JSON 中的哨兵值：真实 key 存于 Keychain
+    /// 旧版本曾把 key 存进 Keychain、JSON 留此哨兵。钥匙串授权绑定二进制，
+    /// 每次重新构建都会弹密码框——现已改回明文存配置文件（0600 权限）
     static let keychainSentinel = "(stored-in-keychain)"
 
-    /// 启动时把 JSON 里的明文 key 迁移进 Keychain，JSON 只留哨兵
-    static func migrateKeyToKeychainIfNeeded() {
-        guard var config = loadRaw() else { return }
-        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty, key != placeholderKey, key != keychainSentinel else { return }
-        KeychainStore.set(key)
-        config.apiKey = keychainSentinel
+    /// 启动时一次性反向迁移：配置里是哨兵才去 Keychain 把 key 搬回文件；
+    /// 平时完全不碰 Keychain，不触发任何系统弹窗
+    static func migrateKeyFromKeychainIfNeeded() {
+        guard var config = loadRaw(),
+              config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                  == keychainSentinel,
+              let stored = KeychainStore.get(), !stored.isEmpty else { return }
+        config.apiKey = stored
         writeRaw(config)
     }
 
@@ -278,6 +280,9 @@ enum ConfigStore {
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         if let data = try? encoder.encode(config) {
             try? data.write(to: configURL)
+            // 明文 key 在文件里：收紧权限，仅本人可读写
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: configURL.path)
         }
     }
 
@@ -335,13 +340,12 @@ enum ConfigStore {
         return try? JSONDecoder().decode(AppConfig.self, from: data)
     }
 
-    /// 每次请求时重新读取，改配置不用重启。
-    /// key 优先级：JSON 里的真实值（手改场景，下次启动自动迁移）> Keychain
+    /// 每次请求时重新读取，改配置不用重启。key 直接来自配置文件
     static func load() throws -> AppConfig {
         guard let data = try? Data(contentsOf: configURL) else {
             throw ConfigError.missing
         }
-        var config: AppConfig
+        let config: AppConfig
         do {
             config = try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
@@ -349,10 +353,7 @@ enum ConfigStore {
         }
         let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if key.isEmpty || key == placeholderKey || key == keychainSentinel {
-            guard let stored = KeychainStore.get(), !stored.isEmpty else {
-                throw ConfigError.notConfigured
-            }
-            config.apiKey = stored
+            throw ConfigError.notConfigured
         }
         return config
     }
