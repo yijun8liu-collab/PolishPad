@@ -196,10 +196,11 @@ struct SettingsView: View {
                         .pickerStyle(.menu)
                         // menu 型 Picker 的选项文字有缓存，语言切换/增删场景时按身份重建
                         .id("\(uiEnglish)-\(customScenarios.count)")
-                        Button(UILang.t("AI 生成…", "AI generate…")) {
+                        Button(UILang.t("AI 生成场景", "AI generate")) {
                             promptForScenarioDescription()
                         }
                         .controlSize(.small)
+                        .fixedSize()
                         Button(UILang.t("＋ 新建场景", "＋ New scenario")) {
                             let scenario = CustomScenario(
                                 name: UILang.t("新场景", "New scenario"), prompt: "")
@@ -207,6 +208,7 @@ struct SettingsView: View {
                             promptPreset = "user:" + scenario.id
                         }
                         .controlSize(.small)
+                        .fixedSize()
                     }
                     if let index = selectedUserScenarioIndex {
                         // 用户自定义场景：命名 + 中/EN 双提示词 + 删除
@@ -698,13 +700,20 @@ final class SettingsWindowController {
             w.isReleasedWhenClosed = false
             window = w
         }
-        window?.title = UILang.t("PolishPad 设置", "PolishPad Settings")
-        window?.appearance = NSAppearance(
+        guard let window else { return }
+        window.title = UILang.t("PolishPad 设置", "PolishPad Settings")
+        window.appearance = NSAppearance(
             named: UserDefaults.standard.bool(forKey: "lightTheme") ? .aqua : .darkAqua)
-        // 每次打开重建视图，加载磁盘上的最新配置
-        window?.contentView = NSHostingView(rootView: SettingsView())
-        window?.center()
-        window?.makeKeyAndOrderFront(nil)
+        let wasVisible = window.isVisible
+        // 每次打开重建视图，加载磁盘上的最新配置。
+        // 先按内容定尺寸再居中显示——否则零尺寸窗口先居中、再被内容
+        // 撑大（锚定左下角向右上生长），观感就是"闪一下跳到右上角"
+        let hosting = NSHostingView(rootView: SettingsView())
+        let size = hosting.fittingSize
+        window.setContentSize(size)
+        window.contentView = hosting
+        if !wasVisible { window.center() }
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 }
