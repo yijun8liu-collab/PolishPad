@@ -12,7 +12,12 @@ extension Notification.Name {
 @MainActor
 final class HotkeyRecorderCoordinator: ObservableObject {
     @Published private(set) var activeLabel: String?
+    /// 录制中实时显示按住的修饰键（⌃⌥⇧⌘）
+    @Published private(set) var heldModifiers = ""
+    /// 拒绝原因（不支持的键/缺修饰键），短暂显示后消失
+    @Published private(set) var notice: String?
     private var monitor: Any?
+    private var flagsMonitor: Any?
     private var onCapture: ((String) -> Void)?
     private var startedAt = Date.distantPast
 
@@ -36,6 +41,11 @@ final class HotkeyRecorderCoordinator: ObservableObject {
             self?.handle(event)
             return nil // 录制期间吞掉按键
         }
+        // 按住修饰键即时回显，让用户看到录制确实在工作
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.updateHeldModifiers(event.modifierFlags)
+            return event
+        }
     }
 
     func stop() {
@@ -43,10 +53,36 @@ final class HotkeyRecorderCoordinator: ObservableObject {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
+        if let flagsMonitor {
+            NSEvent.removeMonitor(flagsMonitor)
+            self.flagsMonitor = nil
+        }
+        heldModifiers = ""
+        notice = nil
         if activeLabel != nil {
             activeLabel = nil
             onCapture = nil
             NotificationCenter.default.post(name: .polishPadResumeHotkeys, object: nil)
+        }
+    }
+
+    private func updateHeldModifiers(_ flags: NSEvent.ModifierFlags) {
+        var symbols = ""
+        if flags.contains(.control) { symbols += "⌃" }
+        if flags.contains(.option) { symbols += "⌥" }
+        if flags.contains(.shift) { symbols += "⇧" }
+        if flags.contains(.command) { symbols += "⌘" }
+        heldModifiers = symbols
+        if !symbols.isEmpty { notice = nil }
+    }
+
+    private func reject(_ message: String) {
+        NSSound.beep()
+        notice = message
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self, self.activeLabel != nil else { return }
+            self.notice = nil
         }
     }
 
@@ -56,7 +92,7 @@ final class HotkeyRecorderCoordinator: ObservableObject {
             return
         }
         guard let keyName = GlobalHotKey.keyName(forCode: UInt32(event.keyCode)) else {
-            NSSound.beep()
+            reject(UILang.t("不支持这个按键", "Key not supported"))
             return
         }
         var mods: [String] = []
@@ -65,7 +101,7 @@ final class HotkeyRecorderCoordinator: ObservableObject {
         if event.modifierFlags.contains(.shift) { mods.append("shift") }
         if event.modifierFlags.contains(.command) { mods.append("cmd") }
         guard !mods.isEmpty else {
-            NSSound.beep() // 全局快捷键至少要一个修饰键
+            reject(UILang.t("至少要含一个修饰键", "Needs at least one modifier"))
             return
         }
         let spec = (mods + [keyName]).joined(separator: "+")
@@ -88,14 +124,19 @@ struct HotkeyRecorderField: View {
         HStack {
             Text(label)
             Spacer()
-            Button(isRecording
-                   ? UILang.t("按下快捷键…（Esc 取消）", "Press shortcut… (Esc cancels)")
-                   : prettify(spec)) {
+            Button(buttonLabel) {
                 coordinator.toggle(label) { spec = $0 }
             }
             .controlSize(.small)
             .tint(isRecording ? Color.accentColor : nil)
         }
+    }
+
+    private var buttonLabel: String {
+        guard isRecording else { return prettify(spec) }
+        if let notice = coordinator.notice { return notice }
+        if !coordinator.heldModifiers.isEmpty { return coordinator.heldModifiers + "…" }
+        return UILang.t("按下快捷键…（Esc 取消）", "Press shortcut… (Esc cancels)")
     }
 
     /// "ctrl+option+p" → "⌃⌥P"
@@ -108,8 +149,12 @@ struct HotkeyRecorderField: View {
         ]
         let parts = spec.lowercased().split(separator: "+").map(String.init)
         guard !parts.isEmpty else { return spec }
+        let keyNames: [String: String] = [
+            "space": "Space", "return": "↩", "tab": "⇥", "delete": "⌫",
+            "left": "←", "right": "→", "up": "↑", "down": "↓",
+        ]
         let mods = parts.dropLast().compactMap { symbols[$0] }.joined()
-        let key = parts.last == "space" ? "Space" : parts.last!.uppercased()
+        let key = keyNames[parts.last!] ?? parts.last!.uppercased()
         return mods + key
     }
 }
