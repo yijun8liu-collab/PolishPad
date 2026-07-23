@@ -5,7 +5,6 @@ struct SessionView: View {
     @ObservedObject var model: SessionModel
 
     @State private var hoveringClose = false
-    @State private var skeletonPulse = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +37,11 @@ struct SessionView: View {
                         : [Color.white.opacity(0.11), Color.white.opacity(0.045)],
                     startPoint: .top, endPoint: .bottom
                 )
+                // 神经脉冲氛围层：待机低透明度漂移，等待首字时亮起发脉冲
+                NeuralBackgroundView(
+                    surge: model.isLoading && model.awaitingFirstChunk,
+                    light: model.lightTheme,
+                    active: model.panelVisible)
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
@@ -122,8 +126,15 @@ struct SessionView: View {
                 diffView
                     .frame(maxHeight: .infinity)
             } else if model.awaitingFirstChunk, model.currentResult.isEmpty {
-                skeletonView
-                    .frame(maxHeight: .infinity)
+                // 让位给背景的神经脉冲动画，只叠一行居中小标签
+                VStack {
+                    Spacer()
+                    Text(model.t("神经网络思考中…", "Neural network thinking…"))
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.secondary.opacity(0.65))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 SubmitTextEditor(
                     text: streamingResultText,
@@ -203,26 +214,6 @@ struct SessionView: View {
         model.isLoading && !model.awaitingFirstChunk
             ? .constant(model.currentResult + " ▍")
             : $model.currentResult
-    }
-
-    /// 首字到达前的骨架占位：三条脉动的灰条
-    private var skeletonView: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            ForEach([44, 140, 250], id: \.self) { trailing in
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color.primary.opacity(0.09))
-                    .frame(height: 13)
-                    .padding(.trailing, CGFloat(trailing))
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .opacity(skeletonPulse ? 0.45 : 1)
-        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true),
-                   value: skeletonPulse)
-        .onAppear { skeletonPulse = true }
-        .onDisappear { skeletonPulse = false }
     }
 
     private var statusRow: some View {

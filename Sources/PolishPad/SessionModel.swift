@@ -57,6 +57,9 @@ final class SessionModel: ObservableObject {
     @Published var showDiff = false
     /// 本轮已发出请求但首个流式块还没到（骨架占位/旧文变暗的依据）
     @Published var awaitingFirstChunk = false
+    /// 面板是否可见（由 PanelController 维护）：粒子层只在可见时渲染，
+    /// 否则 TimelineView 在隐藏窗口里空转耗电
+    @Published var panelVisible = false
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet {

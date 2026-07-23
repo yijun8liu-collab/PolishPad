@@ -126,12 +126,14 @@ final class PanelController {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
+        model.panelVisible = true
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
     }
 
     func hide() {
+        model.panelVisible = false
         model.stopDictation()
         // 与 Esc/红点语义一致：关窗即取消进行中的请求——
         // 否则请求在后台跑完会静默覆盖用户剪贴板
@@ -210,6 +212,7 @@ final class PanelController {
     /// replacePrevious 为 true 时先 ⌘Z 撤销上一次粘贴，实现原地替换
     func hideAndPaste(replacePrevious: Bool = false) {
         let target = previousApp
+        model.panelVisible = false
         model.stopDictation()
         panel.orderOut(nil)
         previousApp = nil
