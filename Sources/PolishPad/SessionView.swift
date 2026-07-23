@@ -173,6 +173,31 @@ struct SessionView: View {
         }
     }
 
+    /// 状态文字里的 ✅/⚡ 标记转成 SF Symbol：原生质感、随主题适配
+    private var statusLine: some View {
+        var text = model.statusText
+        let success = text.hasPrefix("✅")
+        if success { text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        let prefetched = text.hasSuffix("⚡")
+        if prefetched { text = String(text.dropLast()).trimmingCharacters(in: .whitespaces) }
+        return HStack(spacing: 4) {
+            if success {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.green.opacity(0.75))
+            }
+            Text(text)
+                .font(.caption)
+                .foregroundColor(Color.secondary.opacity(0.85))
+            if prefetched {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(Color.orange.opacity(0.85))
+                    .help(model.t("停顿预取命中，即时出结果", "Served instantly from idle prefetch"))
+            }
+        }
+    }
+
     /// 流式期间在文字末尾跟一个插入符：token 间停顿时也能看出"还在写"
     private var streamingResultText: Binding<String> {
         model.isLoading && !model.awaitingFirstChunk
@@ -235,9 +260,7 @@ struct SessionView: View {
                     model.shownVersion >= model.versions.count ? 0.3 : 0.9))
             }
 
-            Text(model.statusText)
-                .font(.caption)
-                .foregroundColor(Color.secondary.opacity(0.85))
+            statusLine
                 .lineLimit(1)
 
             Spacer()

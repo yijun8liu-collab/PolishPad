@@ -121,8 +121,8 @@ struct SettingsView: View {
                     Toggle(UILang.t("停顿预取（回车秒出）", "Idle prefetch (instant Enter)"),
                            isOn: $idlePrefetch)
                     Text(UILang.t(
-                        "输入停顿 2 秒后在后台预先优化一轮；回车时内容未再改动即瞬间出结果（状态栏 ⚡）。注意：预取会产生额外的 API 调用，每次有效停顿约多消耗一轮 token。",
-                        "After a 2s typing pause, a round is pre-run in the background; press Enter without further edits and the result appears instantly (⚡). Note: prefetching makes extra API calls — roughly one additional round of tokens per pause."))
+                        "输入停顿 2 秒后在后台预先优化一轮；回车时内容未再改动即瞬间出结果（状态栏显示闪电标记）。注意：预取会产生额外的 API 调用，每次有效停顿约多消耗一轮 token。",
+                        "After a 2s typing pause, a round is pre-run in the background; press Enter without further edits and the result appears instantly (bolt icon in the status bar). Note: prefetching makes extra API calls — roughly one additional round of tokens per pause."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Picker(UILang.t("面板大小", "Panel size"), selection: $panelSizeChoice) {
@@ -256,10 +256,18 @@ struct SettingsView: View {
                 }
                 .disabled(testing)
 
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundColor(statusIsError ? .red : .secondary)
-                    .lineLimit(2)
+                HStack(spacing: 4) {
+                    if !statusMessage.isEmpty {
+                        Image(systemName: statusIsError
+                              ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(statusIsError ? .red : Color.green.opacity(0.8))
+                    }
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundColor(statusIsError ? .red : .secondary)
+                        .lineLimit(2)
+                }
 
                 Spacer()
 
@@ -388,7 +396,7 @@ struct SettingsView: View {
             try data.write(to: ConfigStore.configURL)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o600], ofItemAtPath: ConfigStore.configURL.path)
-            statusMessage = UILang.t("✅ 已保存", "✅ Saved")
+            statusMessage = UILang.t("已保存", "Saved")
             statusIsError = false
             if let preset = PanelSize.presets.first(where: { $0.name == panelSizeChoice }) {
                 PanelSize.store(NSSize(width: preset.w, height: preset.h))
@@ -426,7 +434,7 @@ struct SettingsView: View {
                     updateStatus = UILang.t("发现新版本 \(release.tag_name)，点击「前往下载」获取",
                                             "New version \(release.tag_name) available")
                 } else {
-                    updateStatus = UILang.t("✅ 已是最新版本", "✅ You're up to date")
+                    updateStatus = UILang.t("已是最新版本", "You're up to date")
                 }
             } catch {
                 updateStatus = UILang.t("检查失败：", "Check failed: ") + error.localizedDescription
@@ -455,7 +463,7 @@ struct SettingsView: View {
         Task {
             do {
                 _ = try await LLMClient.complete(messages: messages, config: config)
-                statusMessage = UILang.t("✅ 连接成功", "✅ Connection OK")
+                statusMessage = UILang.t("连接成功", "Connection OK")
                 statusIsError = false
             } catch {
                 statusMessage = error.localizedDescription
