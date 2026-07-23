@@ -25,7 +25,7 @@ struct SessionView: View {
 
             bottomBar
         }
-        .frame(width: 680)
+        .frame(width: 680, height: 470)
         .background(
             ZStack {
                 VisualEffectBackground()
@@ -92,7 +92,7 @@ struct SessionView: View {
                 onSubmit: { model.submitDraft() },
                 onCancel: { model.handleEscape() }
             )
-            .frame(height: 176)
+            .frame(maxHeight: .infinity)
 
             if model.draft.isEmpty {
                 Text(composerPlaceholder)
@@ -113,7 +113,7 @@ struct SessionView: View {
 
             if model.showDiff {
                 diffView
-                    .frame(height: 270)
+                    .frame(maxHeight: .infinity)
             } else {
                 SubmitTextEditor(
                     text: $model.currentResult,
@@ -122,7 +122,7 @@ struct SessionView: View {
                     inset: NSSize(width: 16, height: 8),
                     onCancel: { model.handleEscape() }
                 )
-                .frame(height: 270)
+                .frame(maxHeight: .infinity)
             }
 
             Divider()
