@@ -430,6 +430,8 @@ final class SettingsWindowController {
             window = w
         }
         window?.title = UILang.t("PolishPad 设置", "PolishPad Settings")
+        window?.appearance = NSAppearance(
+            named: UserDefaults.standard.bool(forKey: "lightTheme") ? .aqua : .darkAqua)
         // 每次打开重建视图，加载磁盘上的最新配置
         window?.contentView = NSHostingView(rootView: SettingsView())
         window?.center()

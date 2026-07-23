@@ -95,6 +95,8 @@ struct HUDView: View {
 
     let text: String
     let style: Style
+    /// 视图在每次 present 时重建，取一次当前主题即可
+    private let light = UserDefaults.standard.bool(forKey: "lightTheme")
 
     var body: some View {
         HStack(spacing: 8) {
@@ -102,20 +104,24 @@ struct HUDView: View {
             case .working:
                 ProgressView()
                     .controlSize(.small)
-                    .colorScheme(.dark)
+                    .colorScheme(light ? .light : .dark)
             case .success:
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
             }
             Text(text)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(light ? Color.black.opacity(0.85) : .white)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black.opacity(0.78))
+                .fill(light ? Color.white.opacity(0.94) : Color.black.opacity(0.78))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.black.opacity(light ? 0.12 : 0))
         )
     }
 }

@@ -30,8 +30,13 @@ final class PanelController {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        // 暗夜玻璃：面板固定深色外观（不随系统主题），保证深玻璃 + 浅色文字的稳定对比
-        panel.appearance = NSAppearance(named: .darkAqua)
+        // 玻璃主题：暗色（默认）或明亮，由面板按钮切换、UserDefaults 记忆
+        applyTheme()
+        NotificationCenter.default.addObserver(
+            forName: .polishPadThemeChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyTheme() }
+        }
 
         let hosting = NSHostingView(rootView: SessionView(model: model))
         panel.contentView = hosting
@@ -52,6 +57,11 @@ final class PanelController {
         model.onAutoPaste = { [weak self] replacePrevious in
             self?.pasteAndReturn(replacePrevious: replacePrevious)
         }
+    }
+
+    private func applyTheme() {
+        let light = UserDefaults.standard.bool(forKey: "lightTheme")
+        panel.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
     }
 
     var isVisible: Bool { panel.isVisible }

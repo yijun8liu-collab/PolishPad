@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let polishPadThemeChanged = Notification.Name("PolishPad.themeChanged")
+}
+
 @MainActor
 final class SessionModel: ObservableObject {
     enum Phase {
@@ -35,6 +39,13 @@ final class SessionModel: ObservableObject {
     /// 输出语言开关：false 保持原文语言，true 输出英文（记住上次选择）
     @Published var outputEnglish = UserDefaults.standard.bool(forKey: "outputEnglish") {
         didSet { UserDefaults.standard.set(outputEnglish, forKey: "outputEnglish") }
+    }
+    /// 明亮主题开关（默认暗色玻璃；记住上次选择，面板/HUD/设置窗一起跟随）
+    @Published var lightTheme = UserDefaults.standard.bool(forKey: "lightTheme") {
+        didSet {
+            UserDefaults.standard.set(lightTheme, forKey: "lightTheme")
+            NotificationCenter.default.post(name: .polishPadThemeChanged, object: nil)
+        }
     }
 
     /// 会话内全部版本

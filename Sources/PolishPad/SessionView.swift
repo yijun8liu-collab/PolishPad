@@ -25,13 +25,15 @@ struct SessionView: View {
 
             bottomBar
         }
-        .frame(width: 680, height: 470)
+        .frame(width: 680, height: 400)
         .background(
             ZStack {
-                VisualEffectBackground()
-                // 提亮层：把 HUD 玻璃从近黑拉到炭灰，同时保留透出的壁纸色
+                VisualEffectBackground(light: model.lightTheme)
+                // 垫色层：暗色把 HUD 玻璃提到炭灰；明亮加厚成乳白磨砂
                 LinearGradient(
-                    colors: [Color.white.opacity(0.11), Color.white.opacity(0.045)],
+                    colors: model.lightTheme
+                        ? [Color.white.opacity(0.60), Color.white.opacity(0.34)]
+                        : [Color.white.opacity(0.11), Color.white.opacity(0.045)],
                     startPoint: .top, endPoint: .bottom
                 )
             }
@@ -41,7 +43,10 @@ struct SessionView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.1)],
+                        colors: model.lightTheme
+                            // 明亮：顶部白色内高光渐入黑色细描边
+                            ? [Color.white.opacity(0.65), Color.black.opacity(0.10)]
+                            : [Color.white.opacity(0.28), Color.white.opacity(0.1)],
                         startPoint: .top, endPoint: .bottom
                     ),
                     lineWidth: 1
@@ -379,6 +384,18 @@ struct SessionView: View {
 
             hintView
 
+            Button {
+                model.lightTheme.toggle()
+            } label: {
+                Image(systemName: model.lightTheme ? "moon.stars" : "sun.max")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(Color.secondary.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .help(model.lightTheme
+                  ? model.t("切换为暗色", "Switch to dark")
+                  : model.t("切换为明亮", "Switch to light"))
+
             overflowMenu
         }
         .padding(.horizontal, 16)
@@ -518,10 +535,13 @@ struct SessionView: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7))
             }
-            .foregroundColor(.primary.opacity(0.85))
+            .foregroundColor(model.lightTheme
+                ? Color(red: 0.14, green: 0.34, blue: 0.77)
+                : .primary.opacity(0.85))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            .background(Capsule().fill(
+                Color.accentColor.opacity(model.lightTheme ? 0.13 : 0.16)))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -579,13 +599,17 @@ struct SessionView: View {
 
 /// 暗夜玻璃背景（HUD 材质，配合面板的固定深色外观）
 struct VisualEffectBackground: NSViewRepresentable {
+    var light = false
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .hudWindow
+        view.material = light ? .popover : .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = light ? .popover : .hudWindow
+    }
 }
