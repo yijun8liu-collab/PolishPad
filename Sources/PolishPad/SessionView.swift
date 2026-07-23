@@ -142,8 +142,19 @@ struct SessionView: View {
             .onHover { hoveringClose = $0 }
             .help(model.t("关闭（Esc）", "Close (Esc)"))
             Spacer()
+            Button {
+                NotificationCenter.default.post(
+                    name: .polishPadOpenSettings, object: nil)
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(Color.secondary.opacity(0.65))
+            }
+            .buttonStyle(.plain)
+            .help(model.t("设置", "Settings"))
         }
         .padding(.leading, 12)
+        .padding(.trailing, 14)
         .padding(.top, 10)
         .padding(.bottom, 2)
     }
