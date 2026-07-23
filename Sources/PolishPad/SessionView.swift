@@ -377,9 +377,7 @@ struct SessionView: View {
 
             Spacer()
 
-            Text(hintText)
-                .font(.system(size: 11))
-                .foregroundColor(Color.secondary.opacity(0.6))
+            hintView
 
             overflowMenu
         }
@@ -387,16 +385,61 @@ struct SessionView: View {
         .padding(.vertical, 10)
     }
 
-    private var hintText: String {
+    // MARK: - 快捷键提示：键帽徽章 + 浅色说明
+
+    private struct HintItem {
+        let keys: [String]
+        let label: String
+    }
+
+    private var hintItems: [HintItem] {
         if model.isRecording {
-            return model.t("正在听写 · ⌘D 停止", "Dictating · ⌘D to stop")
+            return [HintItem(keys: ["⌘D"], label: model.t("停止听写", "stop dictation"))]
         }
         if model.isLoading {
-            return model.t("优化中 · Esc 取消", "Refining · Esc to cancel")
+            return [HintItem(keys: ["esc"], label: model.t("取消", "cancel"))]
         }
-        return model.phase == .composing
-            ? model.t("↩ 优化 · ⇧↩ 换行", "↩ refine · ⇧↩ newline")
-            : model.t("↩ 替换 · ⌘[⌘] 版本 · 空↩ 完成", "↩ replace · ⌘[⌘] versions · empty ↩ done")
+        if model.phase == .composing {
+            return [
+                HintItem(keys: ["↩"], label: model.t("优化", "refine")),
+                HintItem(keys: ["⇧↩"], label: model.t("换行", "newline")),
+            ]
+        }
+        return [
+            HintItem(keys: ["↩"], label: model.t("替换 · 留空完成", "replace · empty = done")),
+            HintItem(keys: ["⌘[", "⌘]"], label: model.t("版本", "versions")),
+        ]
+    }
+
+    private var hintView: some View {
+        HStack(spacing: 12) {
+            ForEach(Array(hintItems.enumerated()), id: \.offset) { _, item in
+                HStack(spacing: 4) {
+                    ForEach(item.keys, id: \.self) { keycap($0) }
+                    Text(item.label)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Color.secondary.opacity(0.55))
+                }
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+    }
+
+    private func keycap(_ symbol: String) -> some View {
+        Text(symbol)
+            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+            .foregroundColor(Color.secondary.opacity(0.9))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                    .fill(Color.primary.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.13))
+            )
     }
 
     private var languageToggle: some View {
