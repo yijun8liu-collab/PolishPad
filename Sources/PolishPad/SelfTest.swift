@@ -29,7 +29,7 @@ enum SelfTest {
 
         // 1. 场景预设解析
         check("preset.polish.zh",
-              config.resolvedSystemPrompt(english: false).contains("文本重写工具"))
+              config.resolvedSystemPrompt(english: false).contains("文本改写工具，不是 AI 助手"))
         config.promptPreset = "slack-english"
         check("preset.slack",
               config.resolvedSystemPrompt(english: false).contains("Slack"))
