@@ -14,6 +14,10 @@ final class PanelController {
     private var previousApp: NSRunningApplication?
     /// 本会话上一轮实际粘贴进目标应用的文本（原地替换时按其长度退格删除）
     private var lastPastedText: String?
+    /// 面板顶边的锚定位置：内容变高时保持顶边不动、向下生长
+    /// （无边框窗口默认锚定底边，变高会导致整个面板向上跳）
+    private var panelTopY: CGFloat = 0
+    private var adjustingOrigin = false
 
     init() {
         panel = KeyablePanel(
@@ -35,6 +39,21 @@ final class PanelController {
 
         let hosting = NSHostingView(rootView: SessionView(model: model))
         panel.contentView = hosting
+
+        // 高度变化时把顶边锚回原位；用户拖动面板后更新锚点
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.keepTopAnchored() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.adjustingOrigin else { return }
+                self.panelTopY = self.panel.frame.maxY
+            }
+        }
 
         model.onRequestClose = { [weak self] in self?.hide() }
         model.onRequestCloseAndPaste = { [weak self] in self?.hideAndPaste() }
@@ -88,9 +107,20 @@ final class PanelController {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
+        panelTopY = panel.frame.maxY
+
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
+    }
+
+    private func keepTopAnchored() {
+        guard panel.isVisible, panelTopY > 0 else { return }
+        let frame = panel.frame
+        guard abs(frame.maxY - panelTopY) > 0.5 else { return }
+        adjustingOrigin = true
+        panel.setFrameOrigin(NSPoint(x: frame.minX, y: panelTopY - frame.height))
+        adjustingOrigin = false
     }
 
     func hide() {
