@@ -96,11 +96,13 @@ final class PanelController {
     /// 用户可以立即输入下一轮纠偏
     func pasteAndReturn(replacePrevious: Bool) {
         guard let app = previousApp, !app.isTerminated else {
+            model.autoPasteFailed()
             HUD.shared.hide()
             model.bumpFocus()
             return
         }
         guard KeySimulator.ensureAccessibilityPermission() else {
+            model.autoPasteFailed()
             model.bumpFocus()
             return
         }
@@ -130,6 +132,7 @@ final class PanelController {
                     : UILang.t("已粘贴", "Pasted"))
                 try? await Task.sleep(nanoseconds: 250_000_000)
             } else {
+                self.model.autoPasteFailed()
                 HUD.shared.flashSuccess(UILang.t(
                     "已复制（未能切回原应用，请手动粘贴）",
                     "Copied (couldn't reactivate the app — paste manually)"

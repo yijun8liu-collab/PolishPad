@@ -181,6 +181,12 @@ final class SessionModel: ObservableObject {
         config.resolvedSystemPrompt(english: outputEnglish, presetOverride: activePreset)
     }
 
+    /// 自动粘贴未能执行（目标应用没激活/权限缺失）：回滚"已粘贴"标记，
+    /// 否则空回车会按"已粘贴过→仅关窗"处理，用户以为完成了其实什么都没贴
+    func autoPasteFailed() {
+        hasAutoPasted = false
+    }
+
     /// 满意收工：关窗并把结果粘贴回原应用（结果已在剪贴板）
     func requestCloseAndPaste() {
         guard !currentResult.isEmpty else {
