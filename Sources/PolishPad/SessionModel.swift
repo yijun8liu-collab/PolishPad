@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 extension Notification.Name {
@@ -73,6 +74,18 @@ final class SessionModel: ObservableObject {
     /// 已提交成功的完整对话（system + input + 每轮 feedback/assistant）
     private var messages: [ChatMessage] = []
     private var task: Task<Void, Never>?
+
+    /// 停顿预取：组稿停顿 2s 且成句时后台静默跑一轮；回车时输入与
+    /// 提示词都精确匹配才命中（改过字/切过场景或语言自动作废）
+    private struct Prefetch {
+        let input: String
+        let system: String
+        let output: String
+        let requestMessages: [ChatMessage]
+    }
+    private var prefetchCache: Prefetch?
+    private var prefetchTask: Task<Void, Never>?
+    private var draftDebounce: AnyCancellable?
     private var focusCounter = 0
     private let speech = SpeechRecorder()
     /// 听写开始时输入框里已有的文字，识别结果追加在其后
@@ -97,6 +110,10 @@ final class SessionModel: ObservableObject {
         speech.onError = { [weak self] message in
             self?.errorMessage = message
         }
+        draftDebounce = $draft
+            .removeDuplicates()
+            .debounce(for: .seconds(2), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.maybePrefetch() }
         speech.onPartial = { [weak self] text in
             guard let self else { return }
             let combined = self.dictationBase + text
@@ -186,6 +203,31 @@ final class SessionModel: ObservableObject {
         autoPresetNote = t("已按 \(name) 自动选择", "Auto-selected for \(name)")
     }
 
+    // MARK: - 停顿预取
+
+    private func maybePrefetch() {
+        guard phase == .composing, !isLoading else { return }
+        let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard input.count >= 8 else { return }
+        guard input != prefetchCache?.input else { return }
+        guard let config = try? ConfigStore.load() else { return }
+        let system = systemContent(config)
+        let requestMessages = [
+            ChatMessage(role: "system", content: system),
+            ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
+        ]
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            guard let output = try? await LLMClient.completeStreaming(
+                messages: requestMessages, config: config, onPartial: nil
+            ) else { return }
+            guard !Task.isCancelled, let self else { return }
+            self.prefetchCache = Prefetch(
+                input: input, system: system,
+                output: output, requestMessages: requestMessages)
+        }
+    }
+
     // MARK: - Actions
 
     func submitDraft() {
@@ -201,6 +243,16 @@ final class SessionModel: ObservableObject {
             config = try ConfigStore.load()
         } catch {
             errorMessage = error.localizedDescription
+            return
+        }
+        // 停顿预取命中：输入与提示词都未变，直接采用缓存结果（秒出）
+        if let cached = prefetchCache, cached.input == input,
+           cached.system == systemContent(config) {
+            prefetchCache = nil
+            if phase == .composing { phase = .reviewing }
+            handleSuccess(output: cached.output,
+                          requestMessages: cached.requestMessages)
+            statusText += " ⚡"
             return
         }
         let requestMessages = [
@@ -441,6 +493,8 @@ final class SessionModel: ObservableObject {
         showDiff = false
         messages = []
         hasAutoPasted = false
+        prefetchCache = nil
+        prefetchTask?.cancel()
         sessionID = UUID()
         autoPresetNote = nil
         activePreset = PromptPreset(
