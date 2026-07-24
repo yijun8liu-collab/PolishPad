@@ -44,6 +44,9 @@ struct SettingsView: View {
     @State private var glossaryText = ""
     @State private var updateStatus = ""
     @State private var updateURL: String?
+    @State private var updateZipURL: String?
+    @State private var updateVersion: String?
+    @State private var updating = false
     @State private var checkingUpdate = false
     @State private var launchAtLogin = false
     @StateObject private var recorder = HotkeyRecorderCoordinator()
@@ -342,13 +345,24 @@ struct SettingsView: View {
                     HStack {
                         Text(UILang.t("当前版本", "Current version") + "  v\(appVersion)")
                         Spacer()
-                        if let updateURL {
+                        if let zip = updateZipURL, let version = updateVersion {
+                            // 一键更新：下载→校验→替换→自动重启
+                            Button(updating
+                                   ? UILang.t("更新中…", "Updating…")
+                                   : UILang.t("下载并安装", "Download & Install")) {
+                                installUpdate(zip: zip, version: version)
+                            }
+                            .controlSize(.small)
+                            .disabled(updating)
+                            .fixedSize()
+                        } else if let updateURL {
                             Button(UILang.t("前往下载", "Download Update")) {
                                 if let url = URL(string: updateURL) {
                                     NSWorkspace.shared.open(url)
                                 }
                             }
                             .controlSize(.small)
+                            .fixedSize()
                         } else {
                             Button(checkingUpdate
                                    ? UILang.t("检查中…", "Checking…")
@@ -628,9 +642,14 @@ struct SettingsView: View {
         updateStatus = ""
         Task {
             defer { checkingUpdate = false }
+            struct Asset: Decodable {
+                let name: String
+                let browser_download_url: String
+            }
             struct Release: Decodable {
                 let tag_name: String
                 let html_url: String
+                let assets: [Asset]
             }
             do {
                 var request = URLRequest(url: URL(
@@ -642,13 +661,39 @@ struct SettingsView: View {
                     ? String(release.tag_name.dropFirst()) : release.tag_name
                 if Self.isVersion(latest, newerThan: appVersion) {
                     updateURL = release.html_url
-                    updateStatus = UILang.t("发现新版本 \(release.tag_name)，点击「前往下载」获取",
-                                            "New version \(release.tag_name) available")
+                    updateZipURL = release.assets
+                        .first { $0.name.hasSuffix(".zip") }?.browser_download_url
+                    updateVersion = latest
+                    updateStatus = updateZipURL != nil
+                        ? UILang.t("发现新版本 \(release.tag_name)，可一键更新",
+                                   "New version \(release.tag_name) — one-click update available")
+                        : UILang.t("发现新版本 \(release.tag_name)，点击「前往下载」获取",
+                                   "New version \(release.tag_name) available")
                 } else {
                     updateStatus = UILang.t("已是最新版本", "You're up to date")
                 }
             } catch {
                 updateStatus = UILang.t("检查失败：", "Check failed: ") + error.localizedDescription
+            }
+        }
+    }
+
+    /// 一键更新：失败时降级为打开下载页
+    private func installUpdate(zip: String, version: String) {
+        guard let url = URL(string: zip) else { return }
+        updating = true
+        Task { @MainActor in
+            do {
+                try await SelfUpdater.downloadAndInstall(
+                    zipURL: url, expectedVersion: version
+                ) { stage in updateStatus = stage }
+                // 成功路径不会走到这里（应用已重启）
+            } catch {
+                updating = false
+                updateStatus = error.localizedDescription
+                if let page = updateURL, let pageURL = URL(string: page) {
+                    NSWorkspace.shared.open(pageURL)
+                }
             }
         }
     }

@@ -20,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ConfigStore.ensureConfigFileExists()
         ConfigStore.migrateKeyFromKeychainIfNeeded()
         ConfigStore.migrateLegacyCustomPreset()
+        // 隐藏测试钩子：端到端验证一键更新管线
+        if CommandLine.arguments.contains("--test-selfupdate") {
+            let version = (Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+            Task { @MainActor in
+                await SelfUpdater.testRun(currentVersion: version)
+            }
+        }
         setupMainMenu()
         panelController = PanelController()
         setupQuickPolish()

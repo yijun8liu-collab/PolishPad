@@ -17,7 +17,7 @@ A macOS menu bar utility: summon a floating glass panel with a global hotkey, ty
 3. Universal binary (Apple Silicon + Intel); requires macOS 13+
 4. Grant **Accessibility** permission when prompted (required for paste-back and refine-in-place)
 
-Existing users: **Settings → Check for Updates** compares against the latest release here; download the new zip and replace the app.
+Existing users: **Settings → Check for Updates → Download & Install** — the app updates itself in place and relaunches automatically (v0.6.1+; falls back to the release page when in-place update isn't possible).
 
 ## Build from source
 
