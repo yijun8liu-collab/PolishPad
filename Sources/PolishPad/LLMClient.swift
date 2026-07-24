@@ -71,12 +71,20 @@ enum LLMClient {
     /// 划词/全选替换用的单发优化（无多轮上下文），跟随面板的 中/EN 开关
     static func polishOnce(
         _ input: String,
+        targetBundleID: String? = nil,
         onPartial: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         let config = try ConfigStore.load()
         let english = UserDefaults.standard.bool(forKey: "outputEnglish")
+        // 场景优先级：目标应用的感知映射 > 全局当前场景
+        let scenarios = config.customScenarios ?? []
+        let key = targetBundleID.flatMap { config.appPresets?[$0] }
+            ?? config.promptPreset ?? "polish"
+        let scenario = Scenario.from(key: key, in: scenarios)
         let messages = [
-            ChatMessage(role: "system", content: config.resolvedSystemPrompt(english: english)),
+            ChatMessage(role: "system",
+                        content: config.resolvedSystemPrompt(english: english,
+                                                             scenario: scenario)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
         return try await completeStreaming(messages: messages, config: config, onPartial: onPartial)

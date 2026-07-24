@@ -164,7 +164,9 @@ final class QuickPolishController {
         do {
             // 流式进度：每多收到约 40 字更新一次气泡，长文本下能看到进展
             let progress = ProgressThrottle()
-            let output = try await LLMClient.polishOnce(input) { partial in
+            let output = try await LLMClient.polishOnce(
+                input, targetBundleID: targetApp?.bundleIdentifier
+            ) { partial in
                 let count = partial.count
                 guard progress.shouldReport(count) else { return }
                 Task { @MainActor in

@@ -184,6 +184,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(allItem)
 
         menu.addItem(.separator())
+        // 全局场景：划词/全选与面板默认共用；应用感知映射优先于它
+        let scenarioParent = NSMenuItem(
+            title: UILang.t("场景：", "Scenario: ") + currentScenarioName(),
+            action: nil, keyEquivalent: "")
+        scenarioParent.submenu = buildScenarioMenu()
+        menu.addItem(scenarioParent)
+
+        menu.addItem(.separator())
         let restoreItem = NSMenuItem(
             title: UILang.t("还原上次替换", "Undo Last Replacement"), action: #selector(restoreLastReplacement), keyEquivalent: ""
         )
@@ -215,6 +223,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ))
         menu.delegate = self
         return menu
+    }
+
+    /// 全局当前场景的显示名
+    private func currentScenarioName() -> String {
+        let config = ConfigStore.loadRaw()
+        let scenarios = config?.customScenarios ?? []
+        let key = config?.promptPreset ?? "polish"
+        switch Scenario.from(key: key, in: scenarios) {
+        case .builtin(let preset):
+            return UILang.t(preset.labelZH, preset.labelEN)
+        case .user(let id):
+            guard let scenario = scenarios.first(where: { $0.id == id }) else {
+                return UILang.t("优化（默认）", "Refine (default)")
+            }
+            return UILang.isEnglish ? (scenario.nameEN ?? scenario.name) : scenario.name
+        }
+    }
+
+    /// 场景子菜单：内置 + 用户场景，勾选当前项；选择即全局生效并持久化
+    private func buildScenarioMenu() -> NSMenu {
+        let menu = NSMenu()
+        let config = ConfigStore.loadRaw()
+        let scenarios = config?.customScenarios ?? []
+        let currentKey = config?.promptPreset ?? "polish"
+
+        func add(title: String, key: String) {
+            let item = NSMenuItem(
+                title: title, action: #selector(selectGlobalScenario(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            item.state = key == currentKey ? .on : .off
+            menu.addItem(item)
+        }
+        for preset in PromptPreset.allCases where preset != .custom {
+            add(title: UILang.t(preset.labelZH, preset.labelEN), key: preset.rawValue)
+        }
+        if !scenarios.isEmpty {
+            menu.addItem(.separator())
+            for scenario in scenarios {
+                let name = UILang.isEnglish
+                    ? (scenario.nameEN ?? scenario.name) : scenario.name
+                add(title: name, key: "user:" + scenario.id)
+            }
+        }
+        return menu
+    }
+
+    @objc private func selectGlobalScenario(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String,
+              var config = ConfigStore.loadRaw() else { return }
+        config.promptPreset = key
+        ConfigStore.writeRaw(config)
+        // 面板刷新场景状态；设置窗口下次打开时自然读到
+        NotificationCenter.default.post(name: .polishPadSettingsSaved, object: nil)
+        HUD.shared.flashSuccess(
+            UILang.t("场景：", "Scenario: ") + currentScenarioName())
     }
 
     /// 把 "ctrl+option+space" 这类热键串转成菜单项右侧的原生快捷键显示（⌃⌥Space）
