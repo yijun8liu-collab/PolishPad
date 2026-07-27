@@ -743,6 +743,8 @@ final class SettingsWindowController {
                 defer: false
             )
             w.isReleasedWhenClosed = false
+            // 与主面板同层级：否则从面板打开时会被悬浮面板压在下面
+            w.level = .floating
             window = w
         }
         guard let window else { return }

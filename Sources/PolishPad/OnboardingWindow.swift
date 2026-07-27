@@ -29,6 +29,8 @@ final class OnboardingWindowController {
                 defer: false
             )
             w.isReleasedWhenClosed = false
+            // 与主面板同层级，保证引导窗不被悬浮面板遮住
+            w.level = .floating
             window = w
         }
         guard let window else { return }
