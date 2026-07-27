@@ -129,6 +129,12 @@ final class PanelController {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
+        // 教学模式：预填示例草稿，用户只需按回车
+        if Tutorial.active, model.draft.isEmpty {
+            model.draft = model.t(
+                "帮我看下周三下午的会议室还有没有空的想约三点开个评审会",
+                "hey can u check if theres any meeting room free next wed afternoon, wanna book 3pm for a review, like an hour, 8 ppl")
+        }
         model.panelVisible = true
         if activityToken == nil {
             activityToken = ProcessInfo.processInfo.beginActivity(

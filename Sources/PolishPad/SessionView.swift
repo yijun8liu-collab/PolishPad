@@ -183,7 +183,75 @@ struct SessionView: View {
                     .padding(.leading, 20)
                     .allowsHitTesting(false)
             }
+
+            // 首次使用流程卡：完成/跳过引导前显示（按使用顺序讲一遍流程）
+            if model.showFirstUseHint, model.draft.isEmpty {
+                VStack { Spacer(); firstUseHintCard }
+            }
         }
+    }
+
+    private var firstUseHintCard: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(model.t("第一次使用？三步就会：", "First time? Three steps:"))
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Button(model.t("知道了", "Got it")) {
+                    UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+                    NotificationCenter.default.post(
+                        name: .polishPadOnboardingDone, object: nil)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5))
+                .foregroundColor(.accentColor)
+            }
+            hintLine("1", model.t("把想说的话直接打进来，多口语、多凌乱都行",
+                                  "Type whatever you want to say — rough is fine"))
+            HStack(spacing: 4) {
+                Text("2").font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(model.t("按", "Press"))
+                keycap("↩")
+                Text(model.t("——优化好的文字会自动粘贴回你刚才的应用",
+                             "— the polished text pastes back into your app automatically"))
+            }
+            .font(.system(size: 11))
+            .foregroundColor(Color.secondary)
+            HStack(spacing: 4) {
+                Text("3").font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(model.t("想补充就继续打字，想改就提意见（", "Keep typing to add, or give feedback ("))
+                keycap("⇥")
+                Text(model.t("切换）；满意了直接按", "toggles); when happy just press"))
+                keycap("↩")
+                Text(model.t("关闭面板", "to close"))
+            }
+            .font(.system(size: 11))
+            .foregroundColor(Color.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.accentColor.opacity(0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.18))
+        )
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
+    }
+
+    private func hintLine(_ n: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(n).font(.system(size: 10.5, weight: .semibold))
+                .foregroundColor(.accentColor)
+            Text(text)
+        }
+        .font(.system(size: 11))
+        .foregroundColor(Color.secondary)
     }
 
     // MARK: - 审阅态：状态行 + 结果/diff + chips + 纠偏行

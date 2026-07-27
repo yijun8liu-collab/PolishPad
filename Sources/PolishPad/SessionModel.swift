@@ -64,6 +64,9 @@ final class SessionModel: ObservableObject {
     @Published var panelVisible = false
     /// 本轮蜕变动画的旧文字（首轮=草稿，纠偏轮=上一版结果）
     @Published var morphSource = ""
+    /// 面板空态流程卡：完成/跳过引导前显示
+    @Published var showFirstUseHint =
+        !UserDefaults.standard.bool(forKey: "onboardingCompleted")
     /// 一句话生成场景：创建器开关 / 描述 / 生成中
     @Published var showScenarioCreator = false
     @Published var scenarioDescription = ""
@@ -124,6 +127,12 @@ final class SessionModel: ObservableObject {
         }
         speech.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+        // 引导完成/跳过：空态流程卡消失
+        NotificationCenter.default.addObserver(
+            forName: .polishPadOnboardingDone, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.showFirstUseHint = false }
         }
         // 设置保存后刷新用户场景列表（面板开着时菜单同步最新）；
         // 当前选中的场景被删除时回退到配置的默认场景
@@ -498,7 +507,14 @@ final class SessionModel: ObservableObject {
             preset: activeScenario.keyString
         )
 
-        if ConfigStore.loadRaw()?.autoPaste ?? true {
+        if Tutorial.active {
+            // 教学模式：结果直接写入引导窗口的演示框，不发任何合成按键
+            hasAutoPasted = true
+            NotificationCenter.default.post(
+                name: .polishPadTutorialResult, object: nil,
+                userInfo: ["text": output])
+            bumpFocus()
+        } else if ConfigStore.loadRaw()?.autoPaste ?? true {
             // 极速模式：出结果直接贴回原应用；纠偏轮次先删除上一版再贴
             let replacePrevious = hasAutoPasted
             hasAutoPasted = true

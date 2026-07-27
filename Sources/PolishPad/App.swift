@@ -15,11 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var allHotkeySpec = "ctrl+option+a"
 
     private let settingsController = SettingsWindowController()
+    private let onboardingController = OnboardingWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
         ConfigStore.migrateKeyFromKeychainIfNeeded()
         ConfigStore.migrateLegacyCustomPreset()
+        maybeShowOnboarding()
         // 隐藏测试钩子：端到端验证一键更新管线
         if CommandLine.arguments.contains("--test-selfupdate") {
             let version = (Bundle.main.object(
@@ -216,6 +218,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configItem.target = self
         menu.addItem(configItem)
 
+        let onboardingItem = NSMenuItem(
+            title: UILang.t("新手引导", "Getting Started"),
+            action: #selector(openOnboarding), keyEquivalent: ""
+        )
+        onboardingItem.target = self
+        menu.addItem(onboardingItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
             title: UILang.t("退出 PolishPad", "Quit PolishPad"),
@@ -407,6 +416,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             fresh.items = []
             menu.items = items
         }
+    }
+
+    /// 首启触发：key 未配或未授权时弹引导；两者都就绪的老用户静默豁免
+    private func maybeShowOnboarding() {
+        guard !UserDefaults.standard.bool(forKey: "onboardingCompleted") else { return }
+        let configured = (try? ConfigStore.load()) != nil
+        let trusted = AXIsProcessTrusted()
+        if configured && trusted {
+            // 老用户：一切就绪，不打扰，空态流程卡也不再出现
+            UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+            NotificationCenter.default.post(name: .polishPadOnboardingDone, object: nil)
+        } else {
+            onboardingController.show()
+        }
+    }
+
+    @objc private func openOnboarding() {
+        onboardingController.show()
     }
 
     @objc private func togglePanel() {
