@@ -17,8 +17,27 @@ enum Tutorial {
 }
 
 @MainActor
-final class OnboardingWindowController {
+final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+
+    override init() {
+        super.init()
+        // 完成/跳过（含空态卡"知道了"）：关闭引导窗口本身
+        NotificationCenter.default.addObserver(
+            forName: .polishPadOnboardingDone, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.window?.close() }
+        }
+    }
+
+    /// 任何关闭方式（含标题栏红 X）都必须复位教学模式并释放视图——
+    /// SwiftUI 的 onDisappear 在"关闭不销毁"窗口上不会触发
+    nonisolated func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            Tutorial.active = false
+            window?.contentView = nil // 释放视图：停掉授权轮询计时器
+        }
+    }
 
     func show() {
         if window == nil {
@@ -31,6 +50,7 @@ final class OnboardingWindowController {
             w.isReleasedWhenClosed = false
             // 与主面板同层级，保证引导窗不被悬浮面板遮住
             w.level = .floating
+            w.delegate = self
             window = w
         }
         guard let window else { return }
@@ -376,8 +396,9 @@ struct OnboardingView: View {
     private func finish() {
         Tutorial.active = false
         UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+        // 由 OnboardingWindowController 监听此通知关闭自己的窗口——
+        // 不用 keyWindow（时序竞态下可能误关面板）
         NotificationCenter.default.post(name: .polishPadOnboardingDone, object: nil)
-        NSApp.keyWindow?.close()
     }
 
     /// "ctrl+option+p" → "⌃⌥P"
