@@ -298,7 +298,8 @@ final class SessionModel: ObservableObject {
 
     private func maybePrefetch() {
         guard ConfigStore.loadRaw()?.idlePrefetch ?? true else { return }
-        guard phase == .composing, !isLoading else { return }
+        // 听写中的停顿≠成句：不预取（半截句子费 token 且无意义）
+        guard phase == .composing, !isLoading, !isRecording else { return }
         let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard input.count >= 8 else { return }
         guard input != prefetchCache?.input else { return }
@@ -565,6 +566,12 @@ final class SessionModel: ObservableObject {
 
     /// Esc：听写中先停止听写；请求中先取消请求；否则关窗
     func handleEscape() {
+        // 场景创建卡开着时：Esc 只关卡片，不关面板
+        if showScenarioCreator {
+            showScenarioCreator = false
+            scenarioDescription = ""
+            return
+        }
         if isRecording {
             stopDictation()
         } else if isLoading {

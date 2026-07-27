@@ -429,6 +429,14 @@ struct SettingsView: View {
             let value = UserDefaults.standard.bool(forKey: "outputEnglish")
             if value != uiEnglish { uiEnglish = value }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .polishPadSettingsSaved)) { _ in
+            // 菜单栏切全局场景 / AI 生成场景后同步，避免点保存时写回旧值
+            let config = ConfigStore.loadRaw()
+            customScenarios = config?.customScenarios ?? customScenarios
+            if let preset = config?.promptPreset, preset != promptPreset {
+                promptPreset = preset
+            }
+        }
     }
 
     /// 开机自启动：注册/注销即时生效，状态由系统持有（不进 config.json）

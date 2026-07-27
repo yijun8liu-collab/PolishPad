@@ -118,6 +118,10 @@ struct SessionView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12))
         )
+        .onExitCommand {
+            model.showScenarioCreator = false
+            model.scenarioDescription = ""
+        }
     }
 
     // MARK: - 头栏：左上角关闭（mac 习惯），兼作拖动区
