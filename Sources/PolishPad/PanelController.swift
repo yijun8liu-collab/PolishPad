@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 /// 可成为 key window 的无边框浮动面板
@@ -78,6 +79,30 @@ final class PanelController {
         }
     }
 
+    /// 唤起瞬间读取原应用焦点元素的选中文本（U1）。
+    /// 密码框不读；超长选区不带入；0.25s 超时防止繁忙应用卡住唤起
+    private static func capturedSelection(from app: NSRunningApplication?) -> String? {
+        guard let pid = app?.processIdentifier else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.25)
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+            let focusedAny = focusedRef,
+            CFGetTypeID(focusedAny) == AXUIElementGetTypeID() else { return nil }
+        let element = focusedAny as! AXUIElement
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXSecureTextField" { return nil }
+        var selectionRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXSelectedTextAttribute as CFString, &selectionRef) == .success,
+            let text = selectionRef as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 4000 else { return nil }
+        return trimmed
+    }
+
     private func applyStoredSize() {
         let size = PanelSize.current
         guard panel.isVisible else { return }
@@ -134,6 +159,10 @@ final class PanelController {
             model.draft = model.t(
                 "帮我看下周三下午的会议室还有没有空的想约三点开个评审会",
                 "hey can u check if theres any meeting room free next wed afternoon, wanna book 3pm for a review, like an hour, 8 ppl")
+        } else if model.draft.isEmpty,
+                  let selection = Self.capturedSelection(from: previousApp) {
+            // 原应用有选中文本：自动带入草稿——「选中→唤起→回车」三步完成改写
+            model.draft = selection
         }
         model.panelVisible = true
         if activityToken == nil {
