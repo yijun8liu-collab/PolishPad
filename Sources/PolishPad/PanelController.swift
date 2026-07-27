@@ -18,6 +18,8 @@ final class PanelController {
     /// 面板可见期间阻止 App Nap：否则在别的应用里输入时（本应用后台）
     /// 粒子/蜕变动画的渲染定时器会被系统冻结
     private var activityToken: NSObjectProtocol?
+    /// 程序化定位期间不记录位置（区分用户拖动）
+    private var positioningProgrammatically = false
 
     init() {
         panel = KeyablePanel(
@@ -42,6 +44,32 @@ final class PanelController {
             Task { @MainActor in
                 guard let self else { return }
                 PanelSize.store(self.panel.frame.size)
+            }
+        }
+        // 用户拖动面板后记住位置（下次唤起沿用）
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.positioningProgrammatically,
+                      self.panel.isVisible else { return }
+                UserDefaults.standard.set(
+                    Double(self.panel.frame.origin.x), forKey: "panelOriginX")
+                UserDefaults.standard.set(
+                    Double(self.panel.frame.origin.y), forKey: "panelOriginY")
+            }
+        }
+        // ⋯ 菜单「恢复默认位置」
+        NotificationCenter.default.addObserver(
+            forName: .polishPadResetPanelPosition, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                UserDefaults.standard.removeObject(forKey: "panelOriginX")
+                UserDefaults.standard.removeObject(forKey: "panelOriginY")
+                guard let self, self.panel.isVisible else { return }
+                self.positioningProgrammatically = true
+                self.positionAtDefault()
+                self.positioningProgrammatically = false
             }
         }
         // 设置里选了预设档位：立即应用（可见时锚定顶边变化）
@@ -141,18 +169,14 @@ final class PanelController {
 
         // 应用记忆的尺寸（拖拽或设置预设），再定位
         panel.setContentSize(PanelSize.current)
-        // 出现在鼠标所在屏幕，类 Spotlight 位置（水平居中，偏上）
         panel.layoutIfNeeded()
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
-            ?? NSScreen.main
-        if let screen {
-            let frame = screen.visibleFrame
-            let size = panel.frame.size
-            let x = frame.midX - size.width / 2
-            let y = frame.minY + frame.height * 0.72 - size.height / 2
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        positioningProgrammatically = true
+        if let origin = savedPanelOrigin() {
+            panel.setFrameOrigin(origin) // 用户上次拖到的位置
+        } else {
+            positionAtDefault()
         }
+        positioningProgrammatically = false
 
         // 教学模式：预填示例草稿，用户只需按回车
         if Tutorial.active, model.draft.isEmpty {
@@ -180,6 +204,32 @@ final class PanelController {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
         }
+    }
+
+    /// 记忆位置（仍在某个屏幕可见范围内才使用）
+    private func savedPanelOrigin() -> NSPoint? {
+        guard UserDefaults.standard.object(forKey: "panelOriginX") != nil else { return nil }
+        let origin = NSPoint(
+            x: UserDefaults.standard.double(forKey: "panelOriginX"),
+            y: UserDefaults.standard.double(forKey: "panelOriginY"))
+        let rect = NSRect(origin: origin, size: panel.frame.size)
+        guard NSScreen.screens.contains(where: { $0.visibleFrame.intersects(rect) }) else {
+            return nil // 显示器布局变了：回默认位置
+        }
+        return origin
+    }
+
+    /// 默认位置：鼠标所在屏幕，类 Spotlight（水平居中，偏上）
+    private func positionAtDefault() {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+        guard let screen else { return }
+        let frame = screen.visibleFrame
+        let size = panel.frame.size
+        let x = frame.midX - size.width / 2
+        let y = frame.minY + frame.height * 0.72 - size.height / 2
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     func hide() {

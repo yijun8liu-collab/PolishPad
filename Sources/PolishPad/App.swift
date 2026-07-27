@@ -16,12 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let settingsController = SettingsWindowController()
     private let onboardingController = OnboardingWindowController()
+    /// 静默检查发现的可用更新（菜单顶部据此显示一键升级项）
+    private var availableUpdate: SelfUpdater.LatestRelease?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ConfigStore.ensureConfigFileExists()
         ConfigStore.migrateKeyFromKeychainIfNeeded()
         ConfigStore.migrateLegacyCustomPreset()
         maybeShowOnboarding()
+        checkForUpdatesSilently()
         // 隐藏测试钩子：端到端验证一键更新管线
         if CommandLine.arguments.contains("--test-selfupdate") {
             let version = (Bundle.main.object(
@@ -159,8 +162,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = buildMenu()
     }
 
+    /// 每日至多一次的静默更新检查：不弹任何窗，仅在菜单里放一条升级项
+    private func checkForUpdatesSilently() {
+        let last = UserDefaults.standard.double(forKey: "lastUpdateCheckAt")
+        guard Date().timeIntervalSince1970 - last > 86_400 else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheckAt")
+        Task { @MainActor in
+            guard let latest = try? await SelfUpdater.fetchLatest(),
+                  latest.zipURL != nil else { return }
+            let current = (Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+            if SettingsView.isVersion(latest.version, newerThan: current) {
+                availableUpdate = latest
+            }
+        }
+    }
+
+    @objc private func installAvailableUpdate() {
+        guard let update = availableUpdate, let zip = update.zipURL else { return }
+        Task { @MainActor in
+            do {
+                try await SelfUpdater.downloadAndInstall(
+                    zipURL: zip, expectedVersion: update.version
+                ) { stage in HUD.shared.showWorking(stage) }
+            } catch {
+                HUD.shared.hide()
+                if let page = URL(string: update.pageURL) {
+                    NSWorkspace.shared.open(page)
+                }
+            }
+        }
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+
+        if let update = availableUpdate {
+            let item = NSMenuItem(
+                title: UILang.t("升级到 v\(update.version)…",
+                                "Update to v\(update.version)…"),
+                action: #selector(installAvailableUpdate), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         let openItem = NSMenuItem(
             title: UILang.t("打开优化窗口", "Open Panel"),
             action: #selector(togglePanel), keyEquivalent: ""

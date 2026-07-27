@@ -6,6 +6,7 @@ extension Notification.Name {
     static let polishPadThemeChanged = Notification.Name("PolishPad.themeChanged")
     static let polishPadLanguageChanged = Notification.Name("PolishPad.languageChanged")
     static let polishPadPanelSizeChanged = Notification.Name("PolishPad.panelSizeChanged")
+    static let polishPadResetPanelPosition = Notification.Name("PolishPad.resetPanelPosition")
 }
 
 /// 面板尺寸：UserDefaults 记忆（拖拽调整或设置预设都会更新）

@@ -794,6 +794,10 @@ struct SessionView: View {
                 Divider()
             }
             Button(model.t("重新开始（⌘N）", "Restart (⌘N)")) { model.resetSession() }
+            Button(model.t("恢复默认位置", "Reset panel position")) {
+                NotificationCenter.default.post(
+                    name: .polishPadResetPanelPosition, object: nil)
+            }
             Divider()
             Button(model.t("设置…", "Settings…")) {
                 NotificationCenter.default.post(name: .polishPadOpenSettings, object: nil)

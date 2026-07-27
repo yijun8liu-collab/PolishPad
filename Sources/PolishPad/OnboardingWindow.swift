@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 import SwiftUI
 
 extension Notification.Name {
@@ -82,6 +83,7 @@ struct OnboardingView: View {
     @State private var task1Done = false
     @State private var task2Done = false
     @State private var demoText = ""
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     private let axTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private var panelHotkeyLabel: String {
@@ -292,6 +294,13 @@ struct OnboardingView: View {
                     .strokeBorder(Color.accentColor.opacity(0.45),
                                   style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
             )
+            Toggle(UILang.t("开机自动启动 PolishPad", "Launch PolishPad at login"),
+                   isOn: $launchAtLogin)
+                .font(.system(size: 12))
+                .onChange(of: launchAtLogin) { enabled in
+                    if enabled { try? SMAppService.mainApp.register() }
+                    else { try? SMAppService.mainApp.unregister() }
+                }
             footer {
                 Button(UILang.t("重新演示", "Reset demo")) {
                     task1Done = false
