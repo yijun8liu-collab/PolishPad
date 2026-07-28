@@ -58,6 +58,11 @@ struct SessionView: View {
         .overlay {
             if model.showScenarioCreator { scenarioCreatorCard }
         }
+        // G 入场（内容层）：94% 缩放 + 4px 模糊聚焦成型，与窗口淡入同步
+        .scaleEffect(model.panelVisible ? 1 : 0.94)
+        .blur(radius: model.panelVisible ? 0 : 4)
+        .animation(.timingCurve(0.2, 0.8, 0.3, 1, duration: 0.16),
+                   value: model.panelVisible)
     }
 
     // MARK: - 一句话创建场景

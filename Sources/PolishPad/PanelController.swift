@@ -20,6 +20,8 @@ final class PanelController {
     private var activityToken: NSObjectProtocol?
     /// 程序化定位期间不记录位置（区分用户拖动）
     private var positioningProgrammatically = false
+    /// 淡出代际：快速再唤起时作废进行中的淡出，避免把新面板隐藏
+    private var fadeGeneration = 0
 
     init() {
         panel = KeyablePanel(
@@ -189,14 +191,40 @@ final class PanelController {
             model.draft = selection
         }
         model.panelVisible = true
+        // G 入场：窗口从透明淡入（150ms ease-out），内容层同步缩放聚焦
+        fadeGeneration += 1
+        panel.alphaValue = 0
         if activityToken == nil {
             activityToken = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated],
                 reason: "PolishPad panel visible — keep animations running")
         }
         panel.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            context.timingFunction = CAMediaTimingFunction(
+                controlPoints: 0.2, 0.8, 0.3, 1)
+            panel.animator().alphaValue = 1
+        }
         NSApp.activate(ignoringOtherApps: true)
         model.bumpFocus()
+    }
+
+    /// 退场：120ms 淡出后再真正隐藏；期间若重新唤起则作废
+    private func fadeOutAndOrderOut() {
+        fadeGeneration += 1
+        let generation = fadeGeneration
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        }, completionHandler: {
+            Task { @MainActor in
+                guard generation == self.fadeGeneration else { return }
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+            }
+        })
     }
 
     private func endVisibilityActivity() {
@@ -239,7 +267,7 @@ final class PanelController {
         // 与 Esc/红点语义一致：关窗即取消进行中的请求——
         // 否则请求在后台跑完会静默覆盖用户剪贴板
         model.cancelRequest()
-        panel.orderOut(nil)
+        fadeOutAndOrderOut()
         // 焦点还给唤起前的应用，方便直接 ⌘V
         if let app = previousApp, !app.isTerminated {
             app.activate()
@@ -316,7 +344,7 @@ final class PanelController {
         model.panelVisible = false
         endVisibilityActivity()
         model.stopDictation()
-        panel.orderOut(nil)
+        fadeOutAndOrderOut()
         previousApp = nil
 
         guard let app = target, !app.isTerminated else {
