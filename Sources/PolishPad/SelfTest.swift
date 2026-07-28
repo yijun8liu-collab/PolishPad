@@ -162,6 +162,24 @@ enum SelfTest {
         KeychainStore.delete(account: "selftest")
         check("keychain.delete", KeychainStore.get(account: "selftest") == nil)
 
+        // 7.5 改动强度与智能 chips 解析
+        check("intensity.light",
+              SessionModel.changeIntensity(from: "abcdefghij", to: "abcdefghix").level == 1)
+        check("intensity.full",
+              SessionModel.changeIntensity(from: "aaaaaa", to: "zzzzzz").level == 5)
+        check("intensity.empty",
+              SessionModel.changeIntensity(from: "", to: "x").level == 0)
+        check("chips.parse",
+              SessionModel.parseSuggestions(#"["改短一点","加个称呼"]"#)
+                  == ["改短一点", "加个称呼"])
+        check("chips.fenced",
+              SessionModel.parseSuggestions("```json\n[\"补充时间\"]\n```") == ["补充时间"])
+        check("chips.bad", SessionModel.parseSuggestions("抱歉") == nil)
+        check("chips.overlong",
+              SessionModel.parseSuggestions(
+                  #"["这是一条超过二十个字符长度限制的过长建议应当被过滤掉","保留"]"#)
+                  == ["保留"])
+
         // 8. 版本比较
         check("semver.newer", SettingsView.isVersion("0.5.0", newerThan: "0.4.9"))
         check("semver.equal", !SettingsView.isVersion("0.5.0", newerThan: "0.5.0"))

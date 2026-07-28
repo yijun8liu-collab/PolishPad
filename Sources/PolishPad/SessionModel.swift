@@ -65,6 +65,15 @@ final class SessionModel: ObservableObject {
     @Published var panelVisible = false
     /// 本轮蜕变动画的旧文字（首轮=草稿，纠偏轮=上一版结果）
     @Published var morphSource = ""
+    /// 改动强度（1-5 格，0=隐藏）与文字标签
+    @Published var changeIntensity = 0
+    @Published var changeLabel = ""
+    /// 动态智能 chips：基于本轮结果生成的针对性修改建议（空=用固定四个）
+    @Published var smartChips: [String] = []
+    private var chipsRound = 0
+    /// 语气调音台：正式度/详尽度（50=中性跟随场景，偏离即注入提示词）
+    @Published var toneFormality: Double = 50
+    @Published var toneDetail: Double = 50
     /// 面板空态流程卡：完成/跳过引导前显示
     @Published var showFirstUseHint =
         !UserDefaults.standard.bool(forKey: "onboardingCompleted")
@@ -199,6 +208,41 @@ final class SessionModel: ObservableObject {
         focusToken = focusCounter
     }
 
+    /// 改动强度：按相似度映射为 1-5 格
+    static func changeIntensity(from old: String, to new: String)
+        -> (level: Int, zh: String, en: String) {
+        guard !old.isEmpty, !new.isEmpty else { return (0, "", "") }
+        let similarity = DiffRenderer.similarity(between: old, and: new)
+        switch similarity {
+        case 0.9...: return (1, "轻润色", "Light polish")
+        case 0.75..<0.9: return (2, "小修改", "Small edits")
+        case 0.55..<0.75: return (3, "中等改写", "Moderate rewrite")
+        case 0.35..<0.55: return (4, "较大改写", "Major rewrite")
+        default: return (5, "大幅重写", "Full rewrite")
+        }
+    }
+
+    /// 智能 chips 响应解析：剥围栏取方括号，逐条清洗（可自检）
+    static func parseSuggestions(_ raw: String) -> [String]? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            text = text.components(separatedBy: "\n").dropFirst()
+                .joined(separator: "\n")
+            if let fence = text.range(of: "```", options: .backwards) {
+                text = String(text[..<fence.lowerBound])
+            }
+        }
+        guard let start = text.firstIndex(of: "["),
+              let end = text.lastIndex(of: "]"), start < end,
+              let items = try? JSONDecoder().decode(
+                  [String].self, from: Data(String(text[start...end]).utf8))
+        else { return nil }
+        let cleaned = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= 20 }
+        return cleaned.isEmpty ? nil : Array(cleaned.prefix(3))
+    }
+
     /// 界面文案随 中/EN 开关切换
     func t(_ zh: String, _ en: String) -> String {
         outputEnglish ? en : zh
@@ -282,6 +326,27 @@ final class SessionModel: ObservableObject {
         }
     }
 
+    /// 场景专属点缀色：内置固定配色；自定义场景按 id 稳定取色
+    func scenarioColor(_ scenario: Scenario) -> Color {
+        switch scenario {
+        case .builtin(.polish): return Color(red: 0.43, green: 0.62, blue: 1.0)
+        case .builtin(.slackEnglish): return Color(red: 0.73, green: 0.55, blue: 1.0)
+        case .builtin(.formal): return Color(red: 0.48, green: 0.66, blue: 0.85)
+        case .builtin(.concise): return Color(red: 0.94, green: 0.70, blue: 0.37)
+        case .builtin(.custom): return .accentColor
+        case .user(let id):
+            let palette: [Color] = [
+                Color(red: 0.37, green: 0.88, blue: 0.72),
+                Color(red: 1.0, green: 0.62, blue: 0.69),
+                Color(red: 0.56, green: 0.79, blue: 1.0),
+                Color(red: 0.85, green: 0.80, blue: 0.46),
+                Color(red: 0.80, green: 0.65, blue: 1.0),
+            ]
+            let seed = id.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 9973 }
+            return palette[seed % palette.count]
+        }
+    }
+
     /// 当前场景的显示名
     func scenarioName(_ scenario: Scenario) -> String {
         switch scenario {
@@ -358,6 +423,21 @@ final class SessionModel: ObservableObject {
 
     private func systemContent(_ config: AppConfig) -> String {
         config.resolvedSystemPrompt(english: outputEnglish, scenario: activeScenario)
+            + toneBlock()
+    }
+
+    /// 语气调音台注入：仅在偏离中性时附加（50±2 视作默认）
+    private func toneBlock() -> String {
+        let deviates = abs(toneFormality - 50) > 2 || abs(toneDetail - 50) > 2
+        guard deviates else { return "" }
+        if outputEnglish {
+            return "\n\nAdditional tone calibration (overrides scenario defaults): "
+                + "formality \(Int(toneFormality))/100 (0 = very casual, 100 = very formal); "
+                + "verbosity \(Int(toneDetail))/100 (0 = extremely concise, 100 = fully elaborated)."
+        }
+        return "\n\n附加语气要求（优先级高于场景默认）：正式程度 \(Int(toneFormality))/100"
+            + "（0=非常口语，100=非常正式）；详尽程度 \(Int(toneDetail))/100"
+            + "（0=极度精简，100=充分展开）。请按此校准输出风格。"
     }
 
     /// 自动粘贴未能执行（目标应用没激活/权限缺失）：回滚"已粘贴"标记，
@@ -429,9 +509,37 @@ final class SessionModel: ObservableObject {
         run(requestMessages: requestMessages, config: config)
     }
 
+    /// 动态智能 chips：轻量二次调用，预测用户最可能想要的后续修改。
+    /// 静默失败（保留固定四个 chips 兜底）；跨轮次作废
+    private func generateSmartChips(original: String, output: String) {
+        guard var config = try? ConfigStore.load() else { return }
+        config.maxTokens = 150
+        config.temperature = 0.5
+        let round = chipsRound
+        let system = """
+        你是修改建议生成器。用户刚用 AI 把原文改写成了结果。请预测用户最可能想要的后续修改，输出 2-3 条祈使句式的修改指令。
+        要求：只输出一个 JSON 字符串数组（无其他文字、无代码围栏）；每条不超过 12 个字；与结果语言一致；必须针对内容本身、具体可执行，不要"改得更好"这类空话。
+        """
+        let user = "原文：\(String(original.prefix(600)))\n\n改写结果：\(String(output.prefix(600)))"
+        Task { [weak self] in
+            guard let text = try? await LLMClient.complete(
+                messages: [
+                    ChatMessage(role: "system", content: system),
+                    ChatMessage(role: "user", content: user),
+                ], config: config),
+                let chips = Self.parseSuggestions(text) else { return }
+            guard let self, round == self.chipsRound,
+                  self.phase == .reviewing, !self.isLoading else { return }
+            self.smartChips = chips
+        }
+    }
+
     private func run(requestMessages: [ChatMessage], config: AppConfig) {
         isLoading = true
         awaitingFirstChunk = true
+        changeIntensity = 0
+        smartChips = []
+        chipsRound += 1
         // 蜕变动画的源文本：旧文字将逐字变成流式到达的新文字
         morphSource = currentResult.isEmpty
             ? draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -497,6 +605,13 @@ final class SessionModel: ObservableObject {
                         " (much shorter than the last version — check completeness)")
         }
 
+        // 改动强度（首轮=对比草稿，纠偏轮=对比上一版）
+        let intensity = Self.changeIntensity(from: morphSource, to: output)
+        changeIntensity = intensity.level
+        changeLabel = t(intensity.zh, intensity.en)
+
+        generateSmartChips(original: morphSource, output: output)
+
         copyToClipboard(output)
         statusText = t("✅ v\(version) 已复制到剪贴板", "✅ v\(version) copied to clipboard") + warning
         feedback = ""
@@ -545,6 +660,11 @@ final class SessionModel: ObservableObject {
     }
 
     // MARK: - Version switching（⌘[ / ⌘]）
+
+    /// 版本圆点：直接跳转到第 n 版（1-based）
+    func showVersion(_ target: Int) {
+        switchVersion(target - shownVersion)
+    }
 
     func switchVersion(_ delta: Int) {
         guard !isLoading, versions.count > 1 else { return }
@@ -604,6 +724,11 @@ final class SessionModel: ObservableObject {
         showDiff = false
         messages = []
         hasAutoPasted = false
+        changeIntensity = 0
+        smartChips = []
+        chipsRound += 1
+        toneFormality = 50
+        toneDetail = 50
         prefetchCache = nil
         prefetchTask?.cancel()
         sessionID = UUID()

@@ -76,6 +76,8 @@ struct TransmuteView: View {
     let source: String
     /// 已流式到达的新文字
     let output: String
+    /// 光标颜色（跟随场景色）
+    var tint: Color = .accentColor
 
     @State private var cursorOn = true
 
@@ -98,7 +100,7 @@ struct TransmuteView: View {
                                 removal: .identity))
                     }
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.accentColor.opacity(cursorOn ? 0.9 : 0.15))
+                        .fill(tint.opacity(cursorOn ? 0.9 : 0.15))
                         .frame(width: 2, height: 16)
                         .onAppear {
                             withAnimation(.easeInOut(duration: 0.45)

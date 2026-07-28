@@ -5,6 +5,7 @@ struct SessionView: View {
     @ObservedObject var model: SessionModel
 
     @State private var hoveringClose = false
+    @State private var showTonePopover = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,13 +31,21 @@ struct SessionView: View {
         .background(
             ZStack {
                 VisualEffectBackground(light: model.lightTheme)
-                // 垫色层：暗色把 HUD 玻璃提到炭灰；明亮加厚成乳白磨砂
+                // 垫色层：暗色把 HUD 玻璃提到炭灰；明亮只留薄纱（模糊靠材质）
                 LinearGradient(
                     colors: model.lightTheme
-                        ? [Color.white.opacity(0.32), Color.white.opacity(0.14)]
+                        ? [Color.white.opacity(0.26), Color.white.opacity(0.10)]
                         : [Color.white.opacity(0.11), Color.white.opacity(0.045)],
                     startPoint: .top, endPoint: .bottom
                 )
+                // 明亮模式顶部镜面高光：光落在玻璃上缘的质感
+                if model.lightTheme {
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.18), .clear],
+                        startPoint: .top,
+                        endPoint: UnitPoint(x: 0.5, y: 0.18)
+                    )
+                }
                 // 神经脉冲氛围层：待机低透明度漂移，等待首字时亮起发脉冲
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -46,9 +55,11 @@ struct SessionView: View {
                 .strokeBorder(
                     LinearGradient(
                         colors: model.lightTheme
-                            // 明亮：顶部白色内高光渐入黑色细描边
-                            ? [Color.white.opacity(0.65), Color.black.opacity(0.10)]
-                            : [Color.white.opacity(0.28), Color.white.opacity(0.1)],
+                            // 明亮：顶部白高光渐入场景色细描边
+                            ? [Color.white.opacity(0.65),
+                               model.scenarioColor(model.activeScenario).opacity(0.4)]
+                            : [Color.white.opacity(0.28),
+                               model.scenarioColor(model.activeScenario).opacity(0.35)],
                         startPoint: .top, endPoint: .bottom
                     ),
                     lineWidth: 1
@@ -278,7 +289,8 @@ struct SessionView: View {
                 // 超长文本（视图数过多）回退到普通流式显示
                 TransmuteView(
                     source: model.morphSource,
-                    output: model.awaitingFirstChunk ? "" : model.currentResult)
+                    output: model.awaitingFirstChunk ? "" : model.currentResult,
+                    tint: model.scenarioColor(model.activeScenario))
                     .frame(maxHeight: .infinity)
             } else {
                 // 结果区支持直接点击快速编辑（流式/录音期间锁定）；
@@ -330,6 +342,57 @@ struct SessionView: View {
         }
     }
 
+    private var intensityColor: Color {
+        switch model.changeIntensity {
+        case ...2: return Color.green.opacity(0.75)
+        case 3: return Color(red: 0.91, green: 0.70, blue: 0.29)
+        default: return Color(red: 1.0, green: 0.54, blue: 0.4)
+        }
+    }
+
+    private var toneActive: Bool {
+        abs(model.toneFormality - 50) > 2 || abs(model.toneDetail - 50) > 2
+    }
+
+    private var tonePopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.t("语气调音台", "Tone controls"))
+                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 8) {
+                Text(model.t("口语", "Casual")).font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Slider(value: $model.toneFormality, in: 0...100)
+                    .frame(width: 150)
+                Text(model.t("正式", "Formal")).font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            HStack(spacing: 8) {
+                Text(model.t("精简", "Brief")).font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Slider(value: $model.toneDetail, in: 0...100)
+                    .frame(width: 150)
+                Text(model.t("详尽", "Full")).font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            HStack {
+                Text(model.t("作用于下一轮生成；新会话恢复默认",
+                             "Applies to the next round; resets each session"))
+                    .font(.system(size: 9.5))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if toneActive {
+                    Button(model.t("恢复默认", "Reset")) {
+                        model.toneFormality = 50
+                        model.toneDetail = 50
+                    }
+                    .controlSize(.mini)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+    }
+
     /// 状态文字里的 ✅/⚡ 标记转成 SF Symbol：原生质感、随主题适配
     private var statusLine: some View {
         var text = model.statusText
@@ -364,41 +427,54 @@ struct SessionView: View {
 
     private var statusRow: some View {
         HStack(spacing: 6) {
-            // 版本切换（⌘[ / ⌘] 同效）
-            if model.versions.count > 1 {
-                Button {
-                    model.switchVersion(-1)
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .disabled(model.shownVersion <= 1 || model.isLoading)
-                .foregroundColor(Color.secondary.opacity(model.shownVersion <= 1 ? 0.3 : 0.9))
-            }
-            Text(model.versions.count > 1
-                 ? "v\(model.shownVersion)/\(model.versions.count)"
-                 : "v\(model.shownVersion)")
+            Text("v\(model.shownVersion)")
                 .font(.system(size: 10, weight: .semibold).monospacedDigit())
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1.5)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
+            // 版本时间线：可点小圆点，hover 预览该版本开头（⌘[ / ⌘] 同效）
             if model.versions.count > 1 {
-                Button {
-                    model.switchVersion(1)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                HStack(spacing: 6) {
+                    ForEach(Array(model.versions.enumerated()), id: \.offset) { index, version in
+                        Button {
+                            model.showVersion(index + 1)
+                        } label: {
+                            Circle()
+                                .fill(index + 1 == model.shownVersion
+                                    ? model.scenarioColor(model.activeScenario)
+                                    : Color.secondary.opacity(0.3))
+                                .frame(width: index + 1 == model.shownVersion ? 8 : 6,
+                                       height: index + 1 == model.shownVersion ? 8 : 6)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isLoading)
+                        .help("v\(index + 1) · " + String(version.prefix(24)))
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.shownVersion >= model.versions.count || model.isLoading)
-                .foregroundColor(Color.secondary.opacity(
-                    model.shownVersion >= model.versions.count ? 0.3 : 0.9))
+                .padding(.leading, 2)
             }
 
             statusLine
                 .lineLimit(1)
+
+            // 改动强度五格刻度
+            if model.changeIntensity > 0, !model.isLoading {
+                HStack(spacing: 5) {
+                    HStack(spacing: 2.5) {
+                        ForEach(0..<5, id: \.self) { index in
+                            Capsule()
+                                .fill(index < model.changeIntensity
+                                    ? intensityColor : Color.primary.opacity(0.12))
+                                .frame(width: 8, height: 4.5)
+                        }
+                    }
+                    Text(model.changeLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(Color.secondary.opacity(0.65))
+                }
+                .padding(.leading, 4)
+            }
 
             Spacer()
 
@@ -448,6 +524,12 @@ struct SessionView: View {
     /// 快捷反馈 chips：一键发送高频纠偏意见
     private var quickChipsRow: some View {
         HStack(spacing: 6) {
+            if !model.smartChips.isEmpty {
+                ForEach(model.smartChips, id: \.self) { suggestion in
+                    quickChip(suggestion, note: suggestion)
+                }
+                Spacer()
+            } else {
             quickChip(model.t("更短", "Shorter"),
                       note: model.t("把内容压缩得更短、更精炼一些",
                                     "Make it shorter and tighter"))
@@ -461,6 +543,7 @@ struct SessionView: View {
                       note: model.t("把内容展开得更详细、更具体一些",
                                     "Expand with more detail"))
             Spacer()
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -561,6 +644,21 @@ struct SessionView: View {
             languageToggle
 
             presetMenu
+
+            Button {
+                showTonePopover.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11))
+                    .foregroundColor(toneActive
+                        ? model.scenarioColor(model.activeScenario)
+                        : Color.secondary.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .help(model.t("语气调音台", "Tone controls"))
+            .popover(isPresented: $showTonePopover, arrowEdge: .top) {
+                tonePopover
+            }
 
             if let note = model.autoPresetNote {
                 Text(note)
@@ -745,12 +843,14 @@ struct SessionView: View {
                     .font(.system(size: 7))
             }
             .foregroundColor(model.lightTheme
-                ? Color(red: 0.14, green: 0.34, blue: 0.77)
+                ? model.scenarioColor(model.activeScenario).opacity(0.95)
                 : .primary.opacity(0.85))
+            .brightness(model.lightTheme ? -0.28 : 0)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(
-                Color.accentColor.opacity(model.lightTheme ? 0.13 : 0.16)))
+                model.scenarioColor(model.activeScenario)
+                    .opacity(model.lightTheme ? 0.16 : 0.22)))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -839,11 +939,14 @@ struct VisualEffectBackground: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .hudWindow  // aqua 外观下即浅色通透玻璃
+        // 明亮：popover 材质（重模糊强扩散，磨砂感）；暗色：hudWindow
+        view.material = light ? .popover : .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = light ? .popover : .hudWindow
+    }
 }
