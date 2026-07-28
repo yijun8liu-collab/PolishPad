@@ -509,6 +509,26 @@ final class SessionModel: ObservableObject {
         run(requestMessages: requestMessages, config: config)
     }
 
+    /// 重新生成：用产生上一轮结果的同一请求再跑一遍，结果追加为新版本。
+    /// 系统消息按当前语言/场景/语气重建——调完语气调音台再按 ⌘R 即可用新语气重出
+    func regenerate() {
+        guard !isLoading, phase == .reviewing, !messages.isEmpty else { return }
+        stopDictation()
+        let config: AppConfig
+        do {
+            config = try ConfigStore.load()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        var base = messages
+        if base.last?.role == "assistant" { base.removeLast() }
+        if let first = base.first, first.role == "system" {
+            base[0] = ChatMessage(role: "system", content: systemContent(config))
+        }
+        run(requestMessages: base, config: config)
+    }
+
     /// 动态智能 chips：轻量二次调用，预测用户最可能想要的后续修改。
     /// 静默失败（保留固定四个 chips 兜底）；跨轮次作废
     private func generateSmartChips(original: String, output: String) {

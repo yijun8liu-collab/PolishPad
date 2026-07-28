@@ -440,12 +440,15 @@ struct SessionView: View {
                         Button {
                             model.showVersion(index + 1)
                         } label: {
+                            // 固定 14×14 命中框：点得中，且当前点放大时不挤动相邻圆点
                             Circle()
                                 .fill(index + 1 == model.shownVersion
                                     ? model.scenarioColor(model.activeScenario)
                                     : Color.secondary.opacity(0.3))
                                 .frame(width: index + 1 == model.shownVersion ? 8 : 6,
                                        height: index + 1 == model.shownVersion ? 8 : 6)
+                                .frame(width: 14, height: 14)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(model.isLoading)
@@ -477,6 +480,23 @@ struct SessionView: View {
             }
 
             Spacer()
+
+            // 重新生成本轮（应用当前语气/场景/语言）
+            if model.version >= 1, !model.isLoading {
+                Button {
+                    model.regenerate()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Color.secondary.opacity(0.8))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("r", modifiers: .command)
+                .help(model.t("重新生成本轮（⌘R，应用当前语气）",
+                              "Regenerate this round (⌘R, applies current tone)"))
+            }
 
             // 改动对比开关
             if model.version >= 1, !model.isLoading {
