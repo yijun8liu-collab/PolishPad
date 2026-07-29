@@ -6,6 +6,7 @@ struct SessionView: View {
 
     @State private var hoveringClose = false
     @State private var showTonePopover = false
+    @State private var checkVisible = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -393,27 +394,45 @@ struct SessionView: View {
         .frame(width: 260)
     }
 
-    /// 状态文字里的 ✅/⚡ 标记转成 SF Symbol：原生质感、随主题适配
+    /// 状态行：成功态只留一个几秒后自动淡出的绿勾（悬停看详情），
+    /// 进行中/警告类文字照常显示——版本信息由圆点表达，不再重复念一遍
     private var statusLine: some View {
         var text = model.statusText
         let success = text.hasPrefix("✅")
         if success { text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces) }
         let prefetched = text.hasSuffix("⚡")
         if prefetched { text = String(text.dropLast()).trimmingCharacters(in: .whitespaces) }
+        let warning = text.contains("比上一版短") || text.contains("much shorter")
         return HStack(spacing: 4) {
             if success {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 10))
                     .foregroundColor(Color.green.opacity(0.75))
-            }
-            Text(text)
-                .font(.caption)
-                .foregroundColor(Color.secondary.opacity(0.85))
-            if prefetched {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(Color.orange.opacity(0.85))
-                    .help(model.t("停顿预取命中，即时出结果", "Served instantly from idle prefetch"))
+                    .opacity(checkVisible ? 1 : 0)
+                    .help(text)
+                    .task(id: model.statusText) {
+                        checkVisible = true
+                        guard !warning else { return }
+                        try? await Task.sleep(nanoseconds: 4_000_000_000)
+                        withAnimation(.easeOut(duration: 0.8)) { checkVisible = false }
+                    }
+                if prefetched {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(Color.orange.opacity(0.85))
+                        .opacity(checkVisible ? 1 : 0)
+                        .help(model.t("停顿预取命中，即时出结果",
+                                      "Served instantly from idle prefetch"))
+                }
+                if warning {
+                    Text(text)
+                        .font(.caption)
+                        .foregroundColor(Color.orange.opacity(0.9))
+                }
+            } else {
+                Text(text)
+                    .font(.caption)
+                    .foregroundColor(Color.secondary.opacity(0.85))
             }
         }
     }
@@ -427,14 +446,8 @@ struct SessionView: View {
 
     private var statusRow: some View {
         HStack(spacing: 6) {
-            Text("v\(model.shownVersion)")
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.primary.opacity(0.07)))
             // 版本时间线：可点小圆点，hover 预览该版本开头（⌘[ / ⌘] 同效）
-            if model.versions.count > 1 {
+            if !model.versions.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(Array(model.versions.enumerated()), id: \.offset) { index, version in
                         Button {
@@ -452,7 +465,8 @@ struct SessionView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(model.isLoading)
-                        .help("v\(index + 1) · " + String(version.prefix(24)))
+                        .help("v\(index + 1) · " + String(version.prefix(24))
+                              + model.t("　⌘[ ⌘] 切换", "　⌘[ ⌘]"))
                     }
                 }
                 .padding(.leading, 2)
@@ -460,24 +474,6 @@ struct SessionView: View {
 
             statusLine
                 .lineLimit(1)
-
-            // 改动强度五格刻度
-            if model.changeIntensity > 0, !model.isLoading {
-                HStack(spacing: 5) {
-                    HStack(spacing: 2.5) {
-                        ForEach(0..<5, id: \.self) { index in
-                            Capsule()
-                                .fill(index < model.changeIntensity
-                                    ? intensityColor : Color.primary.opacity(0.12))
-                                .frame(width: 8, height: 4.5)
-                        }
-                    }
-                    Text(model.changeLabel)
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.secondary.opacity(0.65))
-                }
-                .padding(.leading, 4)
-            }
 
             Spacer()
 
@@ -498,22 +494,35 @@ struct SessionView: View {
                               "Regenerate this round (⌘R, applies current tone)"))
             }
 
-            // 改动对比开关
+            // 强度刻度即改动入口：点刻度打开/关闭与上一版的对比
             if model.version >= 1, !model.isLoading {
                 Button {
                     model.showDiff.toggle()
                 } label: {
-                    Text(model.t("改动", "Diff"))
-                        .font(.system(size: 10, weight: model.showDiff ? .semibold : .regular))
-                        .foregroundColor(model.showDiff ? .primary : Color.secondary.opacity(0.8))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(
-                            model.showDiff ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
-                        .contentShape(Capsule())
+                    HStack(spacing: 5) {
+                        HStack(spacing: 2.5) {
+                            ForEach(0..<5, id: \.self) { index in
+                                Capsule()
+                                    .fill(index < model.changeIntensity
+                                        ? intensityColor : Color.primary.opacity(0.12))
+                                    .frame(width: 8, height: 4.5)
+                            }
+                        }
+                        if !model.changeLabel.isEmpty {
+                            Text(model.changeLabel)
+                                .font(.system(size: 9))
+                                .foregroundColor(Color.secondary.opacity(0.65))
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(
+                        model.showDiff ? Color.accentColor.opacity(0.22) : Color.clear))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(model.t("对比当前版本与上一版的改动", "Compare with the previous version"))
+                .help(model.t("改动强度；点击对比与上一版的差异",
+                              "Change intensity — click to compare with the previous version"))
             }
         }
         .padding(.horizontal, 18)
@@ -590,9 +599,8 @@ struct SessionView: View {
 
     private var feedbackPlaceholder: String {
         model.feedbackMode == .append
-            ? model.t("补充新内容，优化后并入上文；回车完成…",
-                      "Add new content to merge in; Enter to finish…")
-            : model.t("说怎么改；回车完成…", "Describe changes; Enter to finish…")
+            ? model.t("补充新内容…", "Add more content…")
+            : model.t("想怎么改，直接说…", "Describe the change…")
     }
 
     /// 追加/修改 模式切换（Tab 键同效）
@@ -699,18 +707,6 @@ struct SessionView: View {
                 Color.clear.frame(width: 1, height: 1)
             }
 
-            Button {
-                model.lightTheme.toggle()
-            } label: {
-                Image(systemName: model.lightTheme ? "moon.stars" : "sun.max")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(Color.secondary.opacity(0.8))
-            }
-            .buttonStyle(.plain)
-            .help(model.lightTheme
-                  ? model.t("切换为暗色", "Switch to dark")
-                  : model.t("切换为明亮", "Switch to light"))
-
             overflowMenu
         }
         .padding(.horizontal, 16)
@@ -737,10 +733,7 @@ struct SessionView: View {
                 HintItem(keys: ["⇧↩"], label: model.t("换行", "newline")),
             ]
         }
-        return [
-            HintItem(keys: ["↩"], label: model.t("替换 · 留空完成", "replace · empty = done")),
-            HintItem(keys: ["⌘[", "⌘]"], label: model.t("版本", "versions")),
-        ]
+        return []
     }
 
     /// 草稿框占位提示跟随当前场景
@@ -914,9 +907,19 @@ struct SessionView: View {
     private var overflowMenu: some View {
         Menu {
             if model.phase == .reviewing {
-                Button(model.t("粘贴回原应用", "Paste to App")) { model.requestCloseAndPaste() }
+                Button(model.t("粘贴并替换（↩，留空完成）", "Paste & Replace (↩)")) {
+                    model.requestCloseAndPaste()
+                }
                 Button(model.t("再次复制", "Copy Again")) { model.copyResultAgain() }
+                Button(model.t("重新生成（⌘R）", "Regenerate (⌘R)")) { model.regenerate() }
+                Button(model.t("上一版（⌘[）", "Previous Version (⌘[)")) { model.switchVersion(-1) }
+                Button(model.t("下一版（⌘]）", "Next Version (⌘])")) { model.switchVersion(1) }
                 Divider()
+            }
+            Button(model.lightTheme
+                   ? model.t("切换为暗色主题", "Switch to Dark Theme")
+                   : model.t("切换为明亮主题", "Switch to Light Theme")) {
+                model.lightTheme.toggle()
             }
             Button(model.t("重新开始（⌘N）", "Restart (⌘N)")) { model.resetSession() }
             Button(model.t("恢复默认位置", "Reset panel position")) {
