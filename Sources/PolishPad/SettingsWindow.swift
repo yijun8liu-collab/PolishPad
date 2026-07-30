@@ -28,6 +28,8 @@ struct SettingsView: View {
     @State private var autoPaste = true
     @State private var idlePrefetch = true
     @State private var autoStartDictation = false
+    @State private var useWhisper = false
+    @ObservedObject private var whisperStore = WhisperModelStore.shared
     @State private var uiEnglish = UserDefaults.standard.bool(forKey: "outputEnglish")
     /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
     @State private var panelSizeChoice = "medium"
@@ -169,6 +171,18 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                     Toggle(UILang.t("打开面板自动开启语音输入", "Start dictation when the panel opens"),
                            isOn: $autoStartDictation)
+                    Toggle(UILang.t("Whisper 大模型语音识别（本地）",
+                                    "Whisper large-model dictation (local)"),
+                           isOn: $useWhisper)
+                        .onChange(of: useWhisper) { enabled in
+                            if enabled { WhisperModelStore.shared.startDownloadIfNeeded() }
+                        }
+                    whisperStatusRow
+                    Text(UILang.t(
+                        "中英混合识别显著更准（large-v3-turbo，全程本地运行）。说完一句停顿约 1 秒整句出现，不逐字出字。首次开启需下载约 874MB 模型；Apple Silicon 体验最佳。",
+                        "Much better mixed Chinese-English accuracy (large-v3-turbo, fully local). Text appears sentence-by-sentence after a ~1s pause instead of word-by-word. First enable downloads a ~874MB model; best on Apple Silicon."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     Text(UILang.t(
                         "开启后每次唤起面板即进入听写（等同点击麦克风），说完直接回车。识别语言跟随上方的语音识别语言设置。",
                         "When on, summoning the panel immediately starts dictation (same as tapping the mic) — speak, then press Enter. Recognition language follows the speech locale above."))
@@ -448,6 +462,49 @@ struct SettingsView: View {
     }
 
     /// 开机自启动：注册/注销即时生效，状态由系统持有（不进 config.json）
+    @ViewBuilder
+    private var whisperStatusRow: some View {
+        switch whisperStore.state {
+        case .missing:
+            if useWhisper {
+                HStack(spacing: 8) {
+                    Text(UILang.t("模型未下载", "Model not downloaded"))
+                        .font(.caption).foregroundColor(.secondary)
+                    Button(UILang.t("开始下载", "Download")) {
+                        WhisperModelStore.shared.startDownloadIfNeeded()
+                    }
+                    .controlSize(.small)
+                }
+            }
+        case .downloading(let progress):
+            HStack(spacing: 8) {
+                ProgressView(value: progress)
+                    .frame(width: 160)
+                Text("\(Int(progress * 100))%")
+                    .font(.caption.monospacedDigit()).foregroundColor(.secondary)
+                Button(UILang.t("取消", "Cancel")) {
+                    WhisperModelStore.shared.cancelDownload()
+                }
+                .controlSize(.small)
+            }
+        case .ready:
+            if useWhisper {
+                Label(UILang.t("模型已就绪", "Model ready"), systemImage: "checkmark.circle")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        case .failed(let message):
+            HStack(spacing: 8) {
+                Text(UILang.t("下载失败：", "Download failed: ") + message)
+                    .font(.caption).foregroundColor(.orange)
+                    .lineLimit(1)
+                Button(UILang.t("重试", "Retry")) {
+                    WhisperModelStore.shared.startDownloadIfNeeded()
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
@@ -485,6 +542,7 @@ struct SettingsView: View {
         autoPaste = config.autoPaste ?? true
         idlePrefetch = config.idlePrefetch ?? true
         autoStartDictation = config.autoStartDictation ?? false
+        useWhisper = config.speechEngine == "whisper"
         let size = PanelSize.current
         panelSizeChoice = PanelSize.presets.first {
             abs($0.w - size.width) < 2 && abs($0.h - size.height) < 2
@@ -542,6 +600,7 @@ struct SettingsView: View {
             glossary: glossaryLines.isEmpty ? nil : glossaryLines,
             idlePrefetch: idlePrefetch,
             autoStartDictation: autoStartDictation,
+            speechEngine: useWhisper ? "whisper" : nil,
             presetOverrides: normalizedOverrides(),
             customScenarios: normalizedScenarios()
         )

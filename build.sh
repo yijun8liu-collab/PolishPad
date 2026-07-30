@@ -3,6 +3,18 @@
 set -e
 cd "$(dirname "$0")"
 
+# whisper.cpp 预编译 xcframework（Metal 加速）：体积大不入库，缺失时自动下载
+WHISPER_XCF_VERSION="v1.9.1"
+if [ ! -d "Vendor/whisper.xcframework" ]; then
+    echo "下载 whisper.cpp xcframework ${WHISPER_XCF_VERSION}…"
+    mkdir -p Vendor
+    curl -sL -o Vendor/whisper-xcf.zip \
+        "https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_XCF_VERSION}/whisper-${WHISPER_XCF_VERSION}-xcframework.zip"
+    ditto -x -k Vendor/whisper-xcf.zip Vendor/
+    mv Vendor/build-apple/whisper.xcframework Vendor/
+    rm -rf Vendor/build-apple Vendor/whisper-xcf.zip
+fi
+
 # UNIVERSAL=1 ./build.sh 构建 Intel+Apple Silicon 通用包（发布用）。
 # 用 --triple 分别构建再 lipo 合并：--arch 双架构需要完整 Xcode
 if [ "${UNIVERSAL:-0}" = "1" ]; then
@@ -94,12 +106,19 @@ cp "$BIN" "$APP/Contents/MacOS/PolishPad"
 mkdir -p "$APP/Contents/Resources"
 cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# 嵌入 whisper 动态框架（二进制 rpath 已指向 ../Frameworks）
+mkdir -p "$APP/Contents/Frameworks"
+cp -R Vendor/whisper.xcframework/macos-arm64_x86_64/whisper.framework \
+    "$APP/Contents/Frameworks/"
+
 # 优先使用固定的自签名证书（TCC 授权可跨版本存活），否则退回 ad-hoc
 SIGN_IDENTITY="PolishPad Dev"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/Frameworks/whisper.framework"
     codesign --force --sign "$SIGN_IDENTITY" "$APP"
     echo "已使用证书签名：$SIGN_IDENTITY"
 else
+    codesign --force --sign - "$APP/Contents/Frameworks/whisper.framework" 2>/dev/null || true
     codesign --force --sign - "$APP" 2>/dev/null || true
     echo "未找到「$SIGN_IDENTITY」证书，使用 ad-hoc 签名（每次重打包需重新授权辅助功能）"
 fi

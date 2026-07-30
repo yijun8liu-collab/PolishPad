@@ -4,3 +4,4 @@ PolishPad.app/
 *.zip
 .DS_Store
 prototype/
+Vendor/

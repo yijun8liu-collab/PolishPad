@@ -111,6 +111,8 @@ struct AppConfig: Codable {
     var idlePrefetch: Bool? = nil
     /// 打开面板时自动开启语音输入（默认关）
     var autoStartDictation: Bool? = nil
+    /// 语音识别引擎："system"（默认）或 "whisper"（本地大模型，中英混合更准）
+    var speechEngine: String? = nil
     /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，
     /// 中/EN 共用；删除/清空则恢复内置
     var presetOverrides: [String: String]? = nil

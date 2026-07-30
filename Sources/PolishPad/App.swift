@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         maybeShowOnboarding()
         checkForUpdatesSilently()
         // 隐藏测试钩子：端到端验证一键更新管线
+        if let idx = CommandLine.arguments.firstIndex(of: "--test-whisper"),
+           idx + 1 < CommandLine.arguments.count {
+            WhisperTestCLI.run(wavPath: CommandLine.arguments[idx + 1])
+        }
         if CommandLine.arguments.contains("--test-selfupdate") {
             let version = (Bundle.main.object(
                 forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"

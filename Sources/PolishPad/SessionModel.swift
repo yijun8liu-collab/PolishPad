@@ -116,6 +116,11 @@ final class SessionModel: ObservableObject {
     private var draftDebounce: AnyCancellable?
     private var focusCounter = 0
     private let speech = SpeechRecorder()
+    private let whisperSpeech = WhisperRecorder()
+    /// 本次听写用的引擎（启动时按配置选定，停止用同一个）
+    private var dictationEngine: DictationEngine = .system
+
+    private enum DictationEngine { case system, whisper }
     /// 听写开始时输入框里已有的文字，识别结果追加在其后
     private var dictationBase = ""
     private var sessionID = UUID()
@@ -136,6 +141,12 @@ final class SessionModel: ObservableObject {
             self?.isRecording = recording
         }
         speech.onError = { [weak self] message in
+            self?.errorMessage = message
+        }
+        whisperSpeech.onStateChange = { [weak self] recording in
+            self?.isRecording = recording
+        }
+        whisperSpeech.onError = { [weak self] message in
             self?.errorMessage = message
         }
         // 引导完成/跳过：空态流程卡消失
@@ -174,7 +185,7 @@ final class SessionModel: ObservableObject {
             .removeDuplicates()
             .debounce(for: .seconds(2), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.maybePrefetch() }
-        speech.onPartial = { [weak self] text in
+        let applyDictation: (String) -> Void = { [weak self] text in
             guard let self else { return }
             let combined = self.dictationBase + text
             if self.phase == .composing {
@@ -183,24 +194,41 @@ final class SessionModel: ObservableObject {
                 self.feedback = combined
             }
         }
+        speech.onPartial = applyDictation
+        whisperSpeech.onPartial = applyDictation
     }
 
     // MARK: - Dictation
 
     func toggleDictation() {
         if isRecording {
-            speech.stop()
+            stopDictation()
             return
         }
         guard !isLoading else { return }
         errorMessage = nil
         dictationBase = phase == .composing ? draft : feedback
-        let localeId = ConfigStore.loadRaw()?.speechLocale ?? "zh-CN"
+        let config = ConfigStore.loadRaw()
+        let localeId = config?.speechLocale ?? "zh-CN"
+        // Whisper 引擎：配置开启且模型就绪；未就绪静默回退系统引擎并提示
+        if config?.speechEngine == "whisper" {
+            if WhisperModelStore.isReady {
+                dictationEngine = .whisper
+                whisperSpeech.start(localeId: localeId)
+                return
+            }
+            statusText = t("Whisper 模型未就绪，本次使用系统识别",
+                           "Whisper model not ready — using system engine")
+        }
+        dictationEngine = .system
         speech.start(localeId: localeId)
     }
 
     func stopDictation() {
-        speech.stop()
+        switch dictationEngine {
+        case .system: speech.stop()
+        case .whisper: whisperSpeech.stop()
+        }
     }
 
     func bumpFocus() {
