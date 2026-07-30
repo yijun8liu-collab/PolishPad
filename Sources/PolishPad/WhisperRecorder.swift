@@ -10,7 +10,11 @@ private final class WhisperPipeline: @unchecked Sendable {
     var generation = 0
     /// (文本, 代次) —— 调用方负责回主线程与代次校验
     var onCommit: ((String, Int) -> Void)?
+    /// 说话过程中的滑动窗口预览：当前未完句的临时转写（空串=清除预览）
+    var onInterim: ((String, Int) -> Void)?
     var onLoadError: (() -> Void)?
+    /// 上次预览解码时的样本数：每新增 ~1s 音频重解一次
+    private var lastInterimSamples = 0
 
     private var utterance: [Float] = []
     private var preRoll: [Float] = []
@@ -72,6 +76,16 @@ private final class WhisperPipeline: @unchecked Sendable {
             let utteranceSeconds = Double(utterance.count) / Double(Self.sampleRate)
             if silentSeconds >= Self.endSilence || utteranceSeconds >= Self.maxUtterance {
                 flush(generation: gen)
+            } else if utterance.count - lastInterimSamples >= Self.sampleRate,
+                      utteranceSeconds >= 1.0, utteranceSeconds < 22 {
+                // 滑动窗口预览：不等说完，先把已说的部分解码上屏。
+                // 解码在本队列串行执行（0.1-1s），期间新音频在队列里排队不丢
+                lastInterimSamples = utterance.count
+                if let text = transcriber.transcribe(
+                    samples: utterance, language: language, prompt: prompt),
+                    !text.isEmpty {
+                    onInterim?(text, gen)
+                }
             }
         } else if rms >= entryRMS {
             dlog("SPEECH-START rms=\(rms) floor=\(noiseFloor) entry=\(entryRMS)")
@@ -93,6 +107,7 @@ private final class WhisperPipeline: @unchecked Sendable {
         utterance = []
         inSpeech = false
         silentFrames = 0
+        lastInterimSamples = 0
         let seconds = Double(audio.count) / Double(Self.sampleRate)
         var sum2: Float = 0
         for v in audio { sum2 += v * v }
@@ -104,6 +119,7 @@ private final class WhisperPipeline: @unchecked Sendable {
         let gate = max(noiseFloor * 1.2, 0.0045)
         guard seconds >= 0.3, segRMS >= gate else {
             dlog("DROP \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate) floor=\(noiseFloor)")
+            onInterim?("", gen)   // 清掉可能残留的预览
             return
         }
         dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate)")
@@ -111,6 +127,7 @@ private final class WhisperPipeline: @unchecked Sendable {
             samples: audio, language: language, prompt: prompt),
             !text.isEmpty else {
             dlog("EMPTY-RESULT")
+            onInterim?("", gen)
             return
         }
         dlog("COMMIT \(text.count)字")
@@ -138,6 +155,8 @@ final class WhisperRecorder {
     private let queue = DispatchQueue(label: "polishpad.whisper", qos: .userInitiated)
 
     private var committed = ""
+    /// 当前未完句的滑动预览（定稿后清空）
+    private var interim = ""
     private var language = "zh"
     private var generation = 0
 
@@ -167,6 +186,7 @@ final class WhisperRecorder {
         language = localeId.lowercased().hasPrefix("zh") ? "zh"
             : String(localeId.prefix(2)).lowercased()
         committed = ""
+        interim = ""
         generation += 1
         let gen = generation
         let lang = language
@@ -176,6 +196,13 @@ final class WhisperRecorder {
             Task { @MainActor in
                 guard let self, g == self.generation else { return }
                 self.commit(text)
+            }
+        }
+        pipeline.onInterim = { [weak self] text, g in
+            Task { @MainActor in
+                guard let self, g == self.generation else { return }
+                self.interim = text
+                self.emit()
             }
         }
         pipeline.onLoadError = { [weak self] in
@@ -240,7 +267,15 @@ final class WhisperRecorder {
     private func commit(_ text: String) {
         let separator = language == "zh" ? "" : " "
         committed = committed.isEmpty ? text : committed + separator + text
-        onPartial?(committed)
+        interim = ""
+        emit()
+    }
+
+    private func emit() {
+        let separator = language == "zh" ? "" : " "
+        let full = interim.isEmpty ? committed
+            : (committed.isEmpty ? interim : committed + separator + interim)
+        onPartial?(full)
     }
 
     func stop() {
