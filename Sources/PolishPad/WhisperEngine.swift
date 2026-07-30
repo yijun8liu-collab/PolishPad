@@ -19,6 +19,21 @@ final class WhisperModelStore: NSObject, ObservableObject, URLSessionDownloadDel
     /// 下载完成后的最小合法体积（实际约 874MB）
     nonisolated static let minValidBytes: Int64 = 800_000_000
 
+    /// silero VAD 模型（~1MB）：神经网络人声检测，随主模型自动下载
+    nonisolated static let vadModelName = "ggml-silero-v5.1.2.bin"
+
+    nonisolated static var vadModelURL: URL {
+        ConfigStore.configDirectory
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(vadModelName)
+    }
+
+    nonisolated static var vadReady: Bool {
+        let size = (try? FileManager.default
+            .attributesOfItem(atPath: vadModelURL.path)[.size] as? Int64) ?? 0
+        return (size ?? 0) > 500_000
+    }
+
     nonisolated static var modelURL: URL {
         ConfigStore.configDirectory
             .appendingPathComponent("models", isDirectory: true)
@@ -47,10 +62,29 @@ final class WhisperModelStore: NSObject, ObservableObject, URLSessionDownloadDel
     }
 
     func startDownloadIfNeeded() {
+        downloadVadIfNeeded()
         guard !Self.isReady else { state = .ready; return }
         if case .downloading = state { return }
         sourceIndex = 0
         beginDownload()
+    }
+
+    /// VAD 模型很小，静默补齐即可（含老用户升级路径）
+    private func downloadVadIfNeeded() {
+        guard !Self.vadReady else { return }
+        for base in Self.sources {
+            guard let url = URL(string: base + Self.vadModelName) else { continue }
+            let dest = Self.vadModelURL
+            URLSession.shared.downloadTask(with: url) { location, _, _ in
+                guard let location else { return }
+                let fm = FileManager.default
+                try? fm.createDirectory(at: dest.deletingLastPathComponent(),
+                                        withIntermediateDirectories: true)
+                try? fm.removeItem(at: dest)
+                try? fm.moveItem(at: location, to: dest)
+            }.resume()
+            break
+        }
     }
 
     private func beginDownload() {

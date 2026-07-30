@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import whisper
 
 /// 队列侧管线：VAD 状态机 + 分段解码。所有成员只在同一条串行队列上访问，
 /// 与主线程仅通过 onCommit 回调交互
@@ -23,6 +24,15 @@ private final class WhisperPipeline: @unchecked Sendable {
     private var preRoll: [Float] = []
     private var inSpeech = false
     private var silentFrames = 0
+    /// silero VAD：神经网络人声检测。加载成功后完全取代能量阈值——
+    /// 用户环境"说话 0.012-0.019 vs 环境声 0.006-0.008"能量法已不可分
+    private var vad: OpaquePointer?
+    private var vadCarry: [Float] = []
+    private var speechWindows = 0
+    /// silero 处理窗口：512 样本 = 32ms @16k
+    static let vadWindow = 512
+    static let vadEntry: Float = 0.5
+    static let vadExit: Float = 0.35
     /// 环境底噪 RMS 滑动估计：静音帧持续更新，人声判定相对它浮动，
     /// 轻声说话（0.008-0.015）和大声朗读（0.02+）都能正确触发
     private var noiseFloor: Float = 0.003
@@ -63,10 +73,50 @@ private final class WhisperPipeline: @unchecked Sendable {
            !transcriber.load(modelPath: WhisperModelStore.modelURL.path) {
             onLoadError?()
         }
+        if vad == nil, WhisperModelStore.vadReady {
+            var params = whisper_vad_default_context_params()
+            params.n_threads = 2
+            params.use_gpu = false
+            vad = whisper_vad_init_from_file_with_params(
+                WhisperModelStore.vadModelURL.path, params)
+        }
+        if let vad { whisper_vad_reset_state(vad) }
+        vadCarry = []
+        speechWindows = 0
     }
 
     func process(_ samples: [Float], generation gen: Int) {
         guard gen == generation else { return }
+        if let vad {
+            processWithVAD(vad, samples, generation: gen)
+            return
+        }
+        processWithEnergy(samples, generation: gen)
+    }
+
+    /// silero 路径：逐 32ms 窗口取人声概率，进入 0.5 / 退出 0.35 迟滞
+    private func processWithVAD(_ vad: OpaquePointer, _ samples: [Float],
+                                generation gen: Int) {
+        vadCarry.append(contentsOf: samples)
+        let window = Self.vadWindow
+        var offset = 0
+        while vadCarry.count - offset >= window {
+            let chunk = Array(vadCarry[offset..<(offset + window)])
+            offset += window
+            var prob: Float = 0
+            if whisper_vad_detect_speech_no_reset(vad, chunk, Int32(window)),
+               whisper_vad_n_probs(vad) > 0,
+               let probs = whisper_vad_probs(vad) {
+                prob = probs[Int(whisper_vad_n_probs(vad)) - 1]
+            }
+            step(chunk: chunk, isSpeech: prob >= Self.vadEntry,
+                 isSilence: prob < Self.vadExit, generation: gen)
+        }
+        if offset > 0 { vadCarry.removeFirst(offset) }
+    }
+
+    /// VAD 模型缺失时的能量法兜底（旧逻辑）
+    private func processWithEnergy(_ samples: [Float], generation gen: Int) {
         var sum: Float = 0
         for s in samples { sum += s * s }
         let rms = (sum / Float(max(samples.count, 1))).squareRoot()
@@ -106,6 +156,42 @@ private final class WhisperPipeline: @unchecked Sendable {
         }
     }
 
+    /// 统一状态机：一个 32ms 窗口的进入/退出决策
+    private func step(chunk: [Float], isSpeech: Bool, isSilence: Bool,
+                      generation gen: Int) {
+        if inSpeech {
+            utterance.append(contentsOf: chunk)
+            if isSpeech { speechWindows += 1 }
+            if isSilence { silentFrames += 1 } else { silentFrames = 0 }
+            let silentSeconds = Double(silentFrames) * Double(Self.vadWindow)
+                / Double(Self.sampleRate)
+            let utteranceSeconds = Double(utterance.count) / Double(Self.sampleRate)
+            if silentSeconds >= Self.endSilence || utteranceSeconds >= Self.maxUtterance {
+                flush(generation: gen)
+            } else if interimEnabled,
+                      utterance.count - lastInterimSamples >= Self.sampleRate,
+                      utteranceSeconds >= 1.0, utteranceSeconds < 22 {
+                lastInterimSamples = utterance.count
+                if let text = transcriber.transcribe(
+                    samples: utterance, language: language, prompt: prompt),
+                    !text.isEmpty {
+                    onInterim?(text, gen)
+                }
+            }
+        } else if isSpeech {
+            dlog("VAD-SPEECH-START")
+            inSpeech = true
+            silentFrames = 0
+            speechWindows = 1
+            utterance = preRoll + chunk
+            preRoll = []
+        } else {
+            preRoll.append(contentsOf: chunk)
+            let keep = Int(Self.preRollSeconds * Double(Self.sampleRate))
+            if preRoll.count > keep { preRoll.removeFirst(preRoll.count - keep) }
+        }
+    }
+
     func flush(generation gen: Int) {
         let audio = utterance
         utterance = []
@@ -118,15 +204,24 @@ private final class WhisperPipeline: @unchecked Sendable {
         let segRMS = (sum2 / Float(max(audio.count, 1))).squareRoot()
         // 碎片/伪人声闸门：底噪触发的短促段会让 Whisper 凭空编造文字。
         // 闸门相对底噪浮动——大声朗读和轻声口述都不误伤
-        // 触发已经靠 entryRMS 把关，这里只拦极端伪段——用户实测轻声
-        // 说话整段 rms 仅 0.012-0.019（底噪 0.008），闸门必须留足余量
-        let gate = max(noiseFloor * 1.2, 0.0045)
-        guard seconds >= 0.3, segRMS >= gate else {
-            dlog("DROP \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate) floor=\(noiseFloor)")
+        let hadSpeechWindows = speechWindows
+        speechWindows = 0
+        if let vad { whisper_vad_reset_state(vad) }
+        // 伪段闸门：VAD 路径按人声窗口数（≥8 窗 = 0.26s 真人声），
+        // 能量兜底路径沿用相对底噪的闸
+        let passes: Bool
+        if vad != nil {
+            passes = seconds >= 0.3 && hadSpeechWindows >= 8
+        } else {
+            let gate = max(noiseFloor * 1.2, 0.0045)
+            passes = seconds >= 0.3 && segRMS >= gate
+        }
+        guard passes else {
+            dlog("DROP \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
             onInterim?("", gen)   // 清掉可能残留的预览
             return
         }
-        dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate)")
+        dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
         guard let text = transcriber.transcribe(
             samples: audio, language: language, prompt: prompt),
             !text.isEmpty else {
@@ -173,6 +268,8 @@ final class WhisperRecorder {
     private var tailCommitted = ""
     private var tailPartial = ""
     private var tailActive = false
+    /// 尾巴段代次：老任务被取消后的迟到回调直接丢弃，防止定稿后旧句复活
+    private var tailGen = 0
 
     func toggle(localeId: String) {
         if isRecording { stop() } else { start(localeId: localeId) }
@@ -307,13 +404,15 @@ final class WhisperRecorder {
         }
         tailTask?.cancel()
         tailBox.set(request)
+        tailGen += 1
+        let gen = tailGen
         tailTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in self?.handleTail(result: result, error: error) }
+            Task { @MainActor in self?.handleTail(result: result, error: error, gen: gen) }
         }
     }
 
-    private func handleTail(result: SFSpeechRecognitionResult?, error: Error?) {
-        guard isRecording, tailActive else { return }
+    private func handleTail(result: SFSpeechRecognitionResult?, error: Error?, gen: Int) {
+        guard isRecording, tailActive, gen == tailGen else { return }
         if let result {
             let text = result.bestTranscription.formattedString
             if result.isFinal {
