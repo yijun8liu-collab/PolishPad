@@ -14,6 +14,10 @@ private final class WhisperPipeline: @unchecked Sendable {
     var onCommit: ((String, Int) -> Void)?
     /// 说话过程中的滑动窗口预览：当前未完句的临时转写（空串=清除预览）
     var onInterim: ((String, Int) -> Void)?
+    /// 停顿刚被检测到（解码开始前）：融合模式在此刻快照系统侧文字并重开尾巴段
+    var onUtteranceEnd: ((Int) -> Void)?
+    /// 这句解码为空/被判无效：调用方决定快照文字的去留
+    var onUtteranceDropped: ((Int) -> Void)?
     var onLoadError: (() -> Void)?
     /// 滑动窗口预览开关：融合模式（系统引擎负责实时显示）下关闭省 GPU
     var interimEnabled = true
@@ -221,15 +225,18 @@ private final class WhisperPipeline: @unchecked Sendable {
             onInterim?("", gen)   // 清掉可能残留的预览
             return
         }
+        // 先通知"这句说完了"，让调用方立刻快照系统侧文字——
+        // 解码期间用户可能已在说下一句，晚了快照会混入下一句开头
+        onUtteranceEnd?(gen)
         dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
         guard let text = transcriber.transcribe(
             samples: audio, language: language, prompt: prompt),
             !text.isEmpty else {
             dlog("EMPTY-RESULT")
             onInterim?("", gen)
+            onUtteranceDropped?(gen)
             return
         }
-        dlog("COMMIT \(text.count)字")
         onCommit?(text, gen)
     }
 
@@ -270,6 +277,9 @@ final class WhisperRecorder {
     private var tailActive = false
     /// 尾巴段代次：老任务被取消后的迟到回调直接丢弃，防止定稿后旧句复活
     private var tailGen = 0
+    /// 停顿快照：这句话的系统识别版本，等 Whisper 定稿时二选一。
+    /// 纯中文句保留系统版（避免无意义的文字跳动），含英文才用 Whisper 版
+    private var pendingTail: String?
 
     func toggle(localeId: String) {
         if isRecording { stop() } else { start(localeId: localeId) }
@@ -319,6 +329,31 @@ final class WhisperRecorder {
                 self.emit()
             }
         }
+        pipeline.onUtteranceEnd = { [weak self] g in
+            Task { @MainActor in
+                guard let self, g == self.generation, self.tailActive else { return }
+                // 罕见时序防御：上一句还没定稿又来了新句，先把旧快照落袋
+                if let previous = self.pendingTail, !previous.isEmpty {
+                    self.appendCommitted(previous)
+                }
+                self.pendingTail = self.joinTail(self.tailCommitted, self.tailPartial)
+                self.tailCommitted = ""
+                self.tailPartial = ""
+                self.startTailSegment()
+                self.emit()
+            }
+        }
+        pipeline.onUtteranceDropped = { [weak self] g in
+            Task { @MainActor in
+                guard let self, g == self.generation else { return }
+                // Whisper 没给出结果：系统版就是这句的最终版（安全网）
+                if let pending = self.pendingTail, !pending.isEmpty {
+                    self.appendCommitted(pending)
+                }
+                self.pendingTail = nil
+                self.emit()
+            }
+        }
         pipeline.onLoadError = { [weak self] in
             Task { @MainActor in
                 self?.onError?("Whisper 模型加载失败，请到设置里重新下载")
@@ -347,6 +382,7 @@ final class WhisperRecorder {
         // 融合模式装配：系统识别可用则由它负责实时尾巴，关闭滑动窗口预览
         tailCommitted = ""
         tailPartial = ""
+        pendingTail = nil
         tailRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
         tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
             && tailRecognizer?.isAvailable == true
@@ -439,23 +475,38 @@ final class WhisperRecorder {
     }
 
     private func commit(_ text: String) {
+        interim = ""
+        // 版本选择：含英文（Whisper 的价值所在）→ Whisper 版替换；
+        // 纯中文 → 保留屏幕上系统引擎那句，不做无意义的替换跳动；
+        // 系统那句为空（漏听）→ 无论中英都用 Whisper 版
+        let hasEnglish = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
+        let chosen: String
+        if !tailActive {
+            chosen = text
+        } else if hasEnglish {
+            chosen = text
+        } else if let pending = pendingTail, !pending.isEmpty {
+            chosen = pending
+        } else {
+            chosen = text
+        }
+        pendingTail = nil
+        appendCommitted(chosen)
+    }
+
+    private func appendCommitted(_ text: String) {
         let separator = language == "zh" ? "" : " "
         committed = committed.isEmpty ? text : committed + separator + text
-        interim = ""
-        if tailActive {
-            // Whisper 已定稿这一句：重开系统识别段，尾巴只显示之后的新话
-            tailCommitted = ""
-            tailPartial = ""
-            startTailSegment()
-        }
         emit()
     }
 
     private func emit() {
         let separator = language == "zh" ? "" : " "
         let live = tailActive ? joinTail(tailCommitted, tailPartial) : interim
-        let full = live.isEmpty ? committed
-            : (committed.isEmpty ? live : committed + separator + live)
+        var parts = [committed]
+        if let pending = pendingTail, !pending.isEmpty { parts.append(pending) }
+        if !live.isEmpty { parts.append(live) }
+        let full = parts.filter { !$0.isEmpty }.joined(separator: separator)
         onPartial?(full)
     }
 
