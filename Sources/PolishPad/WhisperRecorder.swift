@@ -16,13 +16,33 @@ private final class WhisperPipeline: @unchecked Sendable {
     private var preRoll: [Float] = []
     private var inSpeech = false
     private var silentFrames = 0
+    /// 环境底噪 RMS 滑动估计：静音帧持续更新，人声判定相对它浮动，
+    /// 轻声说话（0.008-0.015）和大声朗读（0.02+）都能正确触发
+    private var noiseFloor: Float = 0.003
 
     static let sampleRate = 16000
-    /// 判定为人声的 RMS 阈值（实测环境噪声 ~0.001，人声 0.03+）
-    static let speechRMS: Float = 0.012
-    static let endSilence = 0.9
+    static let endSilence = 0.75
     static let maxUtterance = 28.0
     static let preRollSeconds = 0.3
+
+    /// 进入人声：高出底噪即触发。宁多勿漏——误收的噪声段有后级
+    /// 能量闸 + polish 兜底，漏掉的话可就真没了（用户实测定标 2026-07-30）
+    private var entryRMS: Float { max(noiseFloor * 2.5, 0.005) }
+    /// 静音判定用低得多的退出阈值（迟滞）：轻声说话的弱音节 rms 会
+    /// 掉到底噪 1.5 倍附近，退出阈值再高句子就被切碎了
+    private var exitRMS: Float { max(noiseFloor * 1.3, 0.003) }
+
+    private func dlog(_ message: String) {
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/polishpad-whisper.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? line.data(using: .utf8)!.write(to: url)
+        }
+    }
 
     func reset(language: String, prompt: String, generation: Int) {
         self.language = language
@@ -47,18 +67,21 @@ private final class WhisperPipeline: @unchecked Sendable {
 
         if inSpeech {
             utterance.append(contentsOf: samples)
-            if rms < Self.speechRMS { silentFrames += 1 } else { silentFrames = 0 }
+            if rms < exitRMS { silentFrames += 1 } else { silentFrames = 0 }
             let silentSeconds = Double(silentFrames) * frameSeconds
             let utteranceSeconds = Double(utterance.count) / Double(Self.sampleRate)
             if silentSeconds >= Self.endSilence || utteranceSeconds >= Self.maxUtterance {
                 flush(generation: gen)
             }
-        } else if rms >= Self.speechRMS {
+        } else if rms >= entryRMS {
+            dlog("SPEECH-START rms=\(rms) floor=\(noiseFloor) entry=\(entryRMS)")
             inSpeech = true
             silentFrames = 0
             utterance = preRoll + samples
             preRoll = []
         } else {
+            // 静音期：更新底噪估计（慢速 EMA，防止把渐强的人声学进去）
+            noiseFloor = min(max(noiseFloor * 0.95 + rms * 0.05, 0.0005), 0.02)
             preRoll.append(contentsOf: samples)
             let keep = Int(Self.preRollSeconds * Double(Self.sampleRate))
             if preRoll.count > keep { preRoll.removeFirst(preRoll.count - keep) }
@@ -70,16 +93,27 @@ private final class WhisperPipeline: @unchecked Sendable {
         utterance = []
         inSpeech = false
         silentFrames = 0
-        // 不足 0.4s 的碎片多为噪声
-        guard Double(audio.count) / Double(Self.sampleRate) >= 0.4 else { return }
-        // 整段能量闸门：底噪触发的伪人声段（实测 rms<0.013）会让 Whisper
-        // 凭空编造文字，真实语音整段 rms 在 0.022+，0.015 取中间留裕量
+        let seconds = Double(audio.count) / Double(Self.sampleRate)
         var sum2: Float = 0
         for v in audio { sum2 += v * v }
-        guard (sum2 / Float(audio.count)).squareRoot() >= 0.015 else { return }
+        let segRMS = (sum2 / Float(max(audio.count, 1))).squareRoot()
+        // 碎片/伪人声闸门：底噪触发的短促段会让 Whisper 凭空编造文字。
+        // 闸门相对底噪浮动——大声朗读和轻声口述都不误伤
+        // 触发已经靠 entryRMS 把关，这里只拦极端伪段——用户实测轻声
+        // 说话整段 rms 仅 0.012-0.019（底噪 0.008），闸门必须留足余量
+        let gate = max(noiseFloor * 1.2, 0.0045)
+        guard seconds >= 0.3, segRMS >= gate else {
+            dlog("DROP \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate) floor=\(noiseFloor)")
+            return
+        }
+        dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) gate=\(gate)")
         guard let text = transcriber.transcribe(
             samples: audio, language: language, prompt: prompt),
-            !text.isEmpty else { return }
+            !text.isEmpty else {
+            dlog("EMPTY-RESULT")
+            return
+        }
+        dlog("COMMIT \(text.count)字")
         onCommit?(text, gen)
     }
 
