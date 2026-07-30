@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Speech
 
 /// 队列侧管线：VAD 状态机 + 分段解码。所有成员只在同一条串行队列上访问，
 /// 与主线程仅通过 onCommit 回调交互
@@ -13,6 +14,8 @@ private final class WhisperPipeline: @unchecked Sendable {
     /// 说话过程中的滑动窗口预览：当前未完句的临时转写（空串=清除预览）
     var onInterim: ((String, Int) -> Void)?
     var onLoadError: (() -> Void)?
+    /// 滑动窗口预览开关：融合模式（系统引擎负责实时显示）下关闭省 GPU
+    var interimEnabled = true
     /// 上次预览解码时的样本数：每新增 ~1s 音频重解一次
     private var lastInterimSamples = 0
 
@@ -76,7 +79,8 @@ private final class WhisperPipeline: @unchecked Sendable {
             let utteranceSeconds = Double(utterance.count) / Double(Self.sampleRate)
             if silentSeconds >= Self.endSilence || utteranceSeconds >= Self.maxUtterance {
                 flush(generation: gen)
-            } else if utterance.count - lastInterimSamples >= Self.sampleRate,
+            } else if interimEnabled,
+                      utterance.count - lastInterimSamples >= Self.sampleRate,
                       utteranceSeconds >= 1.0, utteranceSeconds < 22 {
                 // 滑动窗口预览：不等说完，先把已说的部分解码上屏。
                 // 解码在本队列串行执行（0.1-1s），期间新音频在队列里排队不丢
@@ -155,10 +159,20 @@ final class WhisperRecorder {
     private let queue = DispatchQueue(label: "polishpad.whisper", qos: .userInitiated)
 
     private var committed = ""
-    /// 当前未完句的滑动预览（定稿后清空）
+    /// 当前未完句的滑动预览（仅系统引擎不可用时兜底）
     private var interim = ""
     private var language = "zh"
     private var generation = 0
+
+    // 融合模式：系统识别负责当前未完句的逐字实时显示（丝滑），
+    // Whisper 每句定稿后原地替换（准确）。系统侧文字同时是安全网——
+    // Whisper 闸门误丢的段，尾巴文字仍会保留进最终结果
+    private let tailBox = RequestBox()
+    private var tailRecognizer: SFSpeechRecognizer?
+    private var tailTask: SFSpeechRecognitionTask?
+    private var tailCommitted = ""
+    private var tailPartial = ""
+    private var tailActive = false
 
     func toggle(localeId: String) {
         if isRecording { stop() } else { start(localeId: localeId) }
@@ -177,7 +191,10 @@ final class WhisperRecorder {
                     self.onError?("麦克风权限被拒绝：请在 系统设置 → 隐私与安全性 → 麦克风 中允许 PolishPad")
                     return
                 }
-                self.beginSession(localeId: localeId)
+                // 系统识别授权用于融合模式的实时尾巴；被拒不阻塞，退回纯 Whisper
+                SFSpeechRecognizer.requestAuthorization { _ in
+                    Task { @MainActor in self.beginSession(localeId: localeId) }
+                }
             }
         }
     }
@@ -230,8 +247,19 @@ final class WhisperRecorder {
         let workQueue = queue
         workQueue.async { pipe.reset(language: lang, prompt: prompt, generation: gen) }
 
+        // 融合模式装配：系统识别可用则由它负责实时尾巴，关闭滑动窗口预览
+        tailCommitted = ""
+        tailPartial = ""
+        tailRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+        tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
+            && tailRecognizer?.isAvailable == true
+        pipe.interimEnabled = !tailActive
+
         input.removeTap(onBus: 0)
+        let box = tailBox
+        let feedTail = tailActive
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            if feedTail { box.append(buffer) }
             // 音频线程：仅重采样，随后转投串行队列
             let ratio = Double(WhisperPipeline.sampleRate) / format.sampleRate
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
@@ -262,25 +290,82 @@ final class WhisperRecorder {
         }
         isRecording = true
         onStateChange?(true)
+        if tailActive { startTailSegment() }
+    }
+
+    /// 开一段系统识别（每次 Whisper 定稿后重开，让尾巴只覆盖"未定稿"部分）
+    private func startTailSegment() {
+        guard let recognizer = tailRecognizer, recognizer.isAvailable else {
+            tailActive = false
+            return
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.addsPunctuation = true
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
+        tailTask?.cancel()
+        tailBox.set(request)
+        tailTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            Task { @MainActor in self?.handleTail(result: result, error: error) }
+        }
+    }
+
+    private func handleTail(result: SFSpeechRecognitionResult?, error: Error?) {
+        guard isRecording, tailActive else { return }
+        if let result {
+            let text = result.bestTranscription.formattedString
+            if result.isFinal {
+                if !text.isEmpty { tailCommitted = joinTail(tailCommitted, text) }
+                tailPartial = ""
+                startTailSegment()
+            } else {
+                tailPartial = text
+            }
+            emit()
+        } else if error != nil {
+            if !tailPartial.isEmpty {
+                tailCommitted = joinTail(tailCommitted, tailPartial)
+                tailPartial = ""
+            }
+            startTailSegment()
+        }
+    }
+
+    private func joinTail(_ head: String, _ tail: String) -> String {
+        if head.isEmpty { return tail }
+        if tail.isEmpty { return head }
+        return head + (language == "zh" ? "" : " ") + tail
     }
 
     private func commit(_ text: String) {
         let separator = language == "zh" ? "" : " "
         committed = committed.isEmpty ? text : committed + separator + text
         interim = ""
+        if tailActive {
+            // Whisper 已定稿这一句：重开系统识别段，尾巴只显示之后的新话
+            tailCommitted = ""
+            tailPartial = ""
+            startTailSegment()
+        }
         emit()
     }
 
     private func emit() {
         let separator = language == "zh" ? "" : " "
-        let full = interim.isEmpty ? committed
-            : (committed.isEmpty ? interim : committed + separator + interim)
+        let live = tailActive ? joinTail(tailCommitted, tailPartial) : interim
+        let full = live.isEmpty ? committed
+            : (committed.isEmpty ? live : committed + separator + live)
         onPartial?(full)
     }
 
     func stop() {
         guard isRecording else { return }
         isRecording = false
+        tailBox.finish()
+        tailTask?.cancel()
+        tailTask = nil
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         let gen = generation
