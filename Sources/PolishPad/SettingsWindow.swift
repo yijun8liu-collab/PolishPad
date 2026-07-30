@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var speechLocale = "zh-CN"
     @State private var autoPaste = true
     @State private var idlePrefetch = true
+    @State private var autoStartDictation = false
     @State private var uiEnglish = UserDefaults.standard.bool(forKey: "outputEnglish")
     /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
     @State private var panelSizeChoice = "medium"
@@ -164,6 +165,13 @@ struct SettingsView: View {
                     Text(UILang.t(
                         "输入停顿 2 秒后在后台预先优化一轮；回车时内容未再改动即瞬间出结果（状态栏显示闪电标记）。注意：预取会产生额外的 API 调用，每次有效停顿约多消耗一轮 token。",
                         "After a 2s typing pause, a round is pre-run in the background; press Enter without further edits and the result appears instantly (bolt icon in the status bar). Note: prefetching makes extra API calls — roughly one additional round of tokens per pause."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Toggle(UILang.t("打开面板自动开启语音输入", "Start dictation when the panel opens"),
+                           isOn: $autoStartDictation)
+                    Text(UILang.t(
+                        "开启后每次唤起面板即进入听写（等同点击麦克风），说完直接回车。识别语言跟随上方的语音识别语言设置。",
+                        "When on, summoning the panel immediately starts dictation (same as tapping the mic) — speak, then press Enter. Recognition language follows the speech locale above."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Picker(UILang.t("面板大小", "Panel size"), selection: $panelSizeChoice) {
@@ -476,6 +484,7 @@ struct SettingsView: View {
         speechLocale = config.speechLocale ?? "zh-CN"
         autoPaste = config.autoPaste ?? true
         idlePrefetch = config.idlePrefetch ?? true
+        autoStartDictation = config.autoStartDictation ?? false
         let size = PanelSize.current
         panelSizeChoice = PanelSize.presets.first {
             abs($0.w - size.width) < 2 && abs($0.h - size.height) < 2
@@ -532,6 +541,7 @@ struct SettingsView: View {
             appPresets: mappings.isEmpty ? nil : mappings,
             glossary: glossaryLines.isEmpty ? nil : glossaryLines,
             idlePrefetch: idlePrefetch,
+            autoStartDictation: autoStartDictation,
             presetOverrides: normalizedOverrides(),
             customScenarios: normalizedScenarios()
         )

@@ -200,6 +200,11 @@ final class PanelController {
                 reason: "PolishPad panel visible — keep animations running")
         }
         panel.makeKeyAndOrderFront(nil)
+        // 默认开启语音：唤起面板即进入听写（教学模式除外）
+        if !Tutorial.active, !model.isRecording,
+           ConfigStore.loadRaw()?.autoStartDictation ?? false {
+            model.toggleDictation()
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(

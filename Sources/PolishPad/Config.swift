@@ -109,6 +109,8 @@ struct AppConfig: Codable {
     var glossary: [String]?
     /// 停顿预取：输入停顿时后台预先优化，回车秒出（默认开；有额外 token 消耗）
     var idlePrefetch: Bool? = nil
+    /// 打开面板时自动开启语音输入（默认关）
+    var autoStartDictation: Bool? = nil
     /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，
     /// 中/EN 共用；删除/清空则恢复内置
     var presetOverrides: [String: String]? = nil
