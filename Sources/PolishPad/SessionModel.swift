@@ -451,7 +451,28 @@ final class SessionModel: ObservableObject {
 
     private func systemContent(_ config: AppConfig) -> String {
         config.resolvedSystemPrompt(english: outputEnglish, scenario: activeScenario)
-            + toneBlock()
+            + Self.asrCorrectionBlock(english: outputEnglish) + toneBlock()
+    }
+
+    /// 语音输入纠错：所有场景统一注入。草稿常来自语音识别，同音/近音
+    /// 误识（尤其技术词被写成无意义音译汉字）应在润色时自动还原
+    static func asrCorrectionBlock(english: Bool) -> String {
+        if english {
+            return "\n\nSpeech-input correction: the draft may come from speech "
+                + "recognition and can contain homophone mis-transcriptions — "
+                + "especially technical terms rendered as nonsensical phonetic "
+                + "Chinese (e.g. \u{201C}白塞子\u{201D} should be \u{201C}batch size\u{201D}, "
+                + "\u{201C}书路\u{201D} should be \u{201C}输入\u{201D}, \u{201C}兰特西\u{201D} should be "
+                + "\u{201C}latency\u{201D}). When a word is clearly implausible in context, "
+                + "first restore the most likely intended term by pronunciation "
+                + "(prefer English technical terms in technical contexts), then "
+                + "rewrite. Only fix clear mis-hearings; keep uncertain words as-is."
+        }
+        return "\n\n语音输入纠错：草稿可能来自语音识别，会有同音/近音误识——"
+            + "尤其技术词常被写成不合常理的音译汉字（如「白塞子」应为 batch size、"
+            + "「书路」应为「输入」、「兰特西」应为 latency）。凡在语境中明显不合常理的词，"
+            + "先按发音还原成最可能的本意（技术语境优先还原为英文术语），再进行改写。"
+            + "只纠正明显误识，不确定的保留原词。"
     }
 
     /// 语气调音台注入：仅在偏离中性时附加（50±2 视作默认）
