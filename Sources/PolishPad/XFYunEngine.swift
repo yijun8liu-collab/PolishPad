@@ -315,11 +315,16 @@ final class XFYunTailEngine {
     /// 结束当前句会话；这一句的终稿通过闭包精确回给这一句（不经引擎级
     /// 共享回调，避免多句并行收尾时张冠李戴）
     func endUtterance(_ completion: ((String) -> Void)? = nil) {
-        if let s = session, let completion {
-            let forward = s.onFinal
-            s.onFinal = { text in
-                forward?(text)
-                completion(text)
+        if let s = session {
+            // 掐断实时通道：收尾后服务器仍会推最后几条部分结果（常是整句
+            // 全文），任其回流会把已快照的句子当"新实时文字"重复显示
+            s.onPartial = nil
+            if let completion {
+                let forward = s.onFinal
+                s.onFinal = { text in
+                    forward?(text)
+                    completion(text)
+                }
             }
         }
         session?.finish()
