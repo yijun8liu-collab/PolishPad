@@ -312,7 +312,16 @@ final class XFYunTailEngine {
         session?.feed(samples)
     }
 
-    func endUtterance() {
+    /// 结束当前句会话；这一句的终稿通过闭包精确回给这一句（不经引擎级
+    /// 共享回调，避免多句并行收尾时张冠李戴）
+    func endUtterance(_ completion: ((String) -> Void)? = nil) {
+        if let s = session, let completion {
+            let forward = s.onFinal
+            s.onFinal = { text in
+                forward?(text)
+                completion(text)
+            }
+        }
         session?.finish()
         session = nil
     }

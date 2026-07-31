@@ -10,16 +10,19 @@ private final class WhisperPipeline: @unchecked Sendable {
     var language = "zh"
     var prompt = ""
     var generation = 0
-    /// (文本, 代次) —— 调用方负责回主线程与代次校验
-    var onCommit: ((String, Int) -> Void)?
+    /// (文本, 句子编号, 代次) —— 调用方负责回主线程与代次校验
+    var onCommit: ((String, Int, Int) -> Void)?
     /// 说话过程中的滑动窗口预览：当前未完句的临时转写（空串=清除预览）
     var onInterim: ((String, Int) -> Void)?
-    /// 停顿刚被检测到（解码开始前）：融合模式在此刻快照系统侧文字并重开尾巴段
-    var onUtteranceEnd: ((Int) -> Void)?
+    /// 停顿刚被检测到（解码开始前）：(句子编号, 代次)。
+    /// 融合模式在此刻快照实时侧文字并重开实时段
+    var onUtteranceEnd: ((Int, Int) -> Void)?
+    /// 句子自增编号：快照与定稿按编号精确配对，杜绝竞态下的重复提交
+    private var utteranceId = 0
     /// 人声段实时音频外送（供云端实时引擎逐帧转写）；isStart 含前导音频
     var onSpeechAudio: (([Float], _ isStart: Bool, Int) -> Void)?
-    /// 这句解码为空/被判无效：调用方决定快照文字的去留
-    var onUtteranceDropped: ((Int) -> Void)?
+    /// 这句解码为空/被判无效：(句子编号, 代次)，调用方决定快照文字的去留
+    var onUtteranceDropped: ((Int, Int) -> Void)?
     var onLoadError: (() -> Void)?
     /// 滑动窗口预览开关：融合模式（系统引擎负责实时显示）下关闭省 GPU
     var interimEnabled = true
@@ -231,19 +234,21 @@ private final class WhisperPipeline: @unchecked Sendable {
             onInterim?("", gen)   // 清掉可能残留的预览
             return
         }
-        // 先通知"这句说完了"，让调用方立刻快照系统侧文字——
+        // 先通知"这句说完了"，让调用方立刻快照实时侧文字——
         // 解码期间用户可能已在说下一句，晚了快照会混入下一句开头
-        onUtteranceEnd?(gen)
-        dlog("DECODE \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
+        utteranceId += 1
+        let uid = utteranceId
+        onUtteranceEnd?(uid, gen)
+        dlog("DECODE#\(uid) \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
         guard let text = transcriber.transcribe(
             samples: audio, language: language, prompt: prompt),
             !text.isEmpty else {
-            dlog("EMPTY-RESULT")
+            dlog("EMPTY-RESULT#\(uid)")
             onInterim?("", gen)
-            onUtteranceDropped?(gen)
+            onUtteranceDropped?(uid, gen)
             return
         }
-        onCommit?(text, gen)
+        onCommit?(text, uid, gen)
     }
 
     func unload() { transcriber.unload() }
@@ -286,9 +291,9 @@ final class WhisperRecorder {
     private var tailActive = false
     /// 尾巴段代次：老任务被取消后的迟到回调直接丢弃，防止定稿后旧句复活
     private var tailGen = 0
-    /// 停顿快照：这句话的系统识别版本，等 Whisper 定稿时二选一。
-    /// 纯中文句保留系统版（避免无意义的文字跳动），含英文才用 Whisper 版
-    private var pendingTail: String?
+    /// 停顿快照队列：每句的实时侧版本按句子编号排队，等对应的 Whisper
+    /// 定稿来"二选一"。队列化后 Whisper 慢半拍也不会重复提交
+    private var pendingSnaps: [(id: Int, text: String)] = []
 
     func toggle(localeId: String) {
         if isRecording { stop() } else { start(localeId: localeId) }
@@ -325,10 +330,10 @@ final class WhisperRecorder {
         let lang = language
         let prompt = Self.buildPrompt(language: language)
 
-        pipeline.onCommit = { [weak self] text, g in
+        pipeline.onCommit = { [weak self] text, uid, g in
             Task { @MainActor in
                 guard let self, g == self.generation else { return }
-                self.commit(text)
+                self.commit(text, utteranceId: uid)
             }
         }
         pipeline.onInterim = { [weak self] text, g in
@@ -338,33 +343,37 @@ final class WhisperRecorder {
                 self.emit()
             }
         }
-        pipeline.onUtteranceEnd = { [weak self] g in
+        pipeline.onUtteranceEnd = { [weak self] uid, g in
             Task { @MainActor in
                 guard let self, g == self.generation,
                       self.tailActive || self.xfyunTail != nil else { return }
-                // 罕见时序防御：上一句还没定稿又来了新句，先把旧快照落袋
-                if let previous = self.pendingTail, !previous.isEmpty {
-                    self.appendCommitted(previous)
-                }
-                self.pendingTail = self.joinTail(self.tailCommitted, self.tailPartial)
+                self.pendingSnaps.append(
+                    (uid, self.joinTail(self.tailCommitted, self.tailPartial)))
                 self.tailCommitted = ""
                 self.tailPartial = ""
                 if let tail = self.xfyunTail {
-                    tail.endUtterance()   // 终稿到达后会升级 pendingTail
+                    // 会话终稿比停顿快照完整：到达时若这句还没被定稿就升级
+                    tail.endUtterance { [weak self] final in
+                        guard let self, !final.isEmpty,
+                              let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid })
+                        else { return }
+                        self.pendingSnaps[idx].text = final
+                        self.emit()
+                    }
                 } else {
                     self.startTailSegment()
                 }
                 self.emit()
             }
         }
-        pipeline.onUtteranceDropped = { [weak self] g in
+        pipeline.onUtteranceDropped = { [weak self] uid, g in
             Task { @MainActor in
                 guard let self, g == self.generation else { return }
-                // Whisper 没给出结果：系统版就是这句的最终版（安全网）
-                if let pending = self.pendingTail, !pending.isEmpty {
-                    self.appendCommitted(pending)
+                // Whisper 没给出结果：实时版就是这句的最终版（安全网）
+                if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
+                    let snap = self.pendingSnaps.remove(at: idx)
+                    if !snap.text.isEmpty { self.appendCommitted(snap.text) }
                 }
-                self.pendingTail = nil
                 self.emit()
             }
         }
@@ -396,7 +405,7 @@ final class WhisperRecorder {
         // 融合模式装配：系统识别可用则由它负责实时尾巴，关闭滑动窗口预览
         tailCommitted = ""
         tailPartial = ""
-        pendingTail = nil
+        pendingSnaps = []
         tailRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
         tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
             && tailRecognizer?.isAvailable == true
@@ -413,14 +422,6 @@ final class WhisperRecorder {
                 guard let self, self.isRecording else { return }
                 self.tailPartial = text
                 self.emit()
-            }
-            engine.onFinal = { [weak self] text in
-                guard let self, self.isRecording || self.pendingTail != nil else { return }
-                // 会话终稿比停顿快照更完整：若这句还没被 Whisper 定稿就升级快照
-                if !text.isEmpty, self.pendingTail != nil {
-                    self.pendingTail = text
-                    self.emit()
-                }
             }
             engine.onUnavailable = { [weak self] in
                 guard let self else { return }
@@ -529,23 +530,28 @@ final class WhisperRecorder {
         return head + (language == "zh" ? "" : " ") + tail
     }
 
-    private func commit(_ text: String) {
+    private func commit(_ text: String, utteranceId uid: Int) {
         interim = ""
+        // 按编号认领这句的快照：Whisper 慢半拍时快照在队列里安然等待，
+        // 不会被后续句子的时序挤出去重复提交
+        var snapshot: String?
+        if let idx = pendingSnaps.firstIndex(where: { $0.id == uid }) {
+            snapshot = pendingSnaps.remove(at: idx).text
+        }
         // 版本选择：含英文（Whisper 的价值所在）→ Whisper 版替换；
-        // 纯中文 → 保留屏幕上系统引擎那句，不做无意义的替换跳动；
-        // 系统那句为空（漏听）→ 无论中英都用 Whisper 版
+        // 纯中文 → 保留实时引擎那句，不做无意义的替换跳动；
+        // 实时那句为空（漏听）→ 无论中英都用 Whisper 版
         let hasEnglish = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
         let chosen: String
         if !tailActive && xfyunTail == nil {
             chosen = text
         } else if hasEnglish {
             chosen = text
-        } else if let pending = pendingTail, !pending.isEmpty {
-            chosen = pending
+        } else if let snapshot, !snapshot.isEmpty {
+            chosen = snapshot
         } else {
             chosen = text
         }
-        pendingTail = nil
         appendCommitted(chosen)
     }
 
@@ -560,7 +566,7 @@ final class WhisperRecorder {
         let hasTail = tailActive || xfyunTail != nil
         let live = hasTail ? joinTail(tailCommitted, tailPartial) : interim
         var parts = [committed]
-        if let pending = pendingTail, !pending.isEmpty { parts.append(pending) }
+        parts.append(contentsOf: pendingSnaps.sorted { $0.id < $1.id }.map(\.text))
         if !live.isEmpty { parts.append(live) }
         let full = parts.filter { !$0.isEmpty }.joined(separator: separator)
         onPartial?(full)
