@@ -347,8 +347,9 @@ final class WhisperRecorder {
             Task { @MainActor in
                 guard let self, g == self.generation,
                       self.tailActive || self.xfyunTail != nil else { return }
-                self.pendingSnaps.append(
-                    (uid, self.joinTail(self.tailCommitted, self.tailPartial)))
+                let snap = self.joinTail(self.tailCommitted, self.tailPartial)
+                Self.flog("SNAP#\(uid) \(snap.prefix(24))")
+                self.pendingSnaps.append((uid, snap))
                 self.tailCommitted = ""
                 self.tailPartial = ""
                 if let tail = self.xfyunTail {
@@ -357,6 +358,7 @@ final class WhisperRecorder {
                         guard let self, !final.isEmpty,
                               let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid })
                         else { return }
+                        Self.flog("UPGRADE#\(uid) \(final.prefix(24))")
                         self.pendingSnaps[idx].text = final
                         self.emit()
                     }
@@ -530,6 +532,18 @@ final class WhisperRecorder {
         return head + (language == "zh" ? "" : " ") + tail
     }
 
+    private static func flog(_ message: String) {
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] FUSION \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/polishpad-whisper.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? line.data(using: .utf8)!.write(to: url)
+        }
+    }
+
     private func commit(_ text: String, utteranceId uid: Int) {
         interim = ""
         // 按编号认领这句的快照：Whisper 慢半拍时快照在队列里安然等待，
@@ -542,6 +556,7 @@ final class WhisperRecorder {
         // 纯中文 → 保留实时引擎那句，不做无意义的替换跳动；
         // 实时那句为空（漏听）→ 无论中英都用 Whisper 版
         let hasEnglish = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
+        Self.flog("CLAIM#\(uid) whisper=\(text.prefix(24)) snap=\((snapshot ?? "无").prefix(24)) en=\(hasEnglish)")
         let chosen: String
         if !tailActive && xfyunTail == nil {
             chosen = text
