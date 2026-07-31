@@ -2,6 +2,19 @@ import CryptoKit
 import Foundation
 
 /// 讯飞流式识别鉴权：HMAC-SHA256 签名 URL
+extension String {
+    func appendLine(to path: String) throws {
+        let url = URL(fileURLWithPath: path)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data(using: .utf8)!)
+            try handle.close()
+        } else {
+            try data(using: .utf8)!.write(to: url)
+        }
+    }
+}
+
 enum XFYunAuth {
     static func signedURL(host: String, path: String,
                           apiKey: String, apiSecret: String,
@@ -138,6 +151,10 @@ final class XFYunSession: NSObject, URLSessionWebSocketDelegate {
             let header = obj["header"] as? [String: Any] ?? [:]
             let code = header["code"] as? Int ?? 0
             guard code == 0 else {
+                if ProcessInfo.processInfo.arguments.contains("--test-xfyun") == false {
+                    try? "[xfyun] bigmodel code=\(code) \(header["message"] ?? "")\n"
+                        .appendLine(to: "/tmp/polishpad-whisper.log")
+                }
                 finished = true
                 onError?(code == 11200 || code == 11201 || code == 11203)
                 return
@@ -153,6 +170,8 @@ final class XFYunSession: NSObject, URLSessionWebSocketDelegate {
         case .classic:
             let code = obj["code"] as? Int ?? 0
             guard code == 0 else {
+                try? "[xfyun] classic code=\(code) \(obj["message"] ?? "")\n"
+                    .appendLine(to: "/tmp/polishpad-whisper.log")
                 finished = true
                 onError?(code == 10407 || code == 11200 || code == 11201)
                 return
@@ -251,6 +270,18 @@ final class XFYunSession: NSObject, URLSessionWebSocketDelegate {
 /// 讯飞实时层引擎：按句开会话，三级降级（大模型 → 经典版 → 报不可用回退系统）
 @MainActor
 final class XFYunTailEngine {
+    private static func xlog(_ message: String) {
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] XFYUN \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/polishpad-whisper.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? line.data(using: .utf8)!.write(to: url)
+        }
+    }
+
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     /// 讯飞两个协议都不可用：上层回退系统 SFSpeech
@@ -282,17 +313,26 @@ final class XFYunTailEngine {
         session?.cancel()
         guard let s = XFYunSession(variant: variant, appId: appId,
                                    apiKey: apiKey, apiSecret: apiSecret) else {
+            Self.xlog("OPEN-FAIL \(variantName)")
             degrade()
             return
         }
+        Self.xlog("OPEN \(variantName)")
         session = s
         s.onPartial = { [weak self] text in self?.onPartial?(text) }
-        s.onFinal = { [weak self] text in self?.onFinal?(text) }
-        s.onError = { [weak self] _ in self?.degrade() }
+        s.onFinal = { [weak self] text in
+            Self.xlog("FINAL \(text.prefix(20))")
+            self?.onFinal?(text)
+        }
+        s.onError = { [weak self] authIssue in
+            Self.xlog("SESSION-ERROR auth=\(authIssue)")
+            self?.degrade()
+        }
     }
 
     /// 大模型 → 经典版 → 不可用；降级后把当前句已收音频重发进新会话
     private func degrade() {
+        Self.xlog("DEGRADE from \(variantName)")
         session = nil
         if variant == .bigModel {
             variant = .classic

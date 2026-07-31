@@ -271,7 +271,21 @@ final class WhisperRecorder {
     /// VAD、缓冲、解码统一在这条串行队列上，whisper ctx 无并发访问
     private let queue = DispatchQueue(label: "polishpad.whisper", qos: .userInitiated)
 
-    private var committed = ""
+    /// 已定稿句子（按句存储，支持讯飞终稿迟到时的追溯替换）
+    private struct CommittedPart {
+        enum Source {
+            case whisper(hadEnglish: Bool)
+            case snapshot
+        }
+        let id: Int
+        var text: String
+        let source: Source
+    }
+    private var committedParts: [CommittedPart] = []
+    private var committed: String {
+        let separator = language == "zh" ? "" : " "
+        return committedParts.map(\.text).joined(separator: separator)
+    }
     /// 当前未完句的滑动预览（仅系统引擎不可用时兜底）
     private var interim = ""
     private var language = "zh"
@@ -323,7 +337,7 @@ final class WhisperRecorder {
     private func beginSession(localeId: String) {
         language = localeId.lowercased().hasPrefix("zh") ? "zh"
             : String(localeId.prefix(2)).lowercased()
-        committed = ""
+        committedParts = []
         interim = ""
         generation += 1
         let gen = generation
@@ -353,14 +367,16 @@ final class WhisperRecorder {
                 self.tailCommitted = ""
                 self.tailPartial = ""
                 if let tail = self.xfyunTail {
-                    // 会话终稿比停顿快照完整：到达时若这句还没被定稿就升级
+                    // 终稿到达：这句还没定稿 → 升级快照；已定稿 → 按规则追溯替换
                     tail.endUtterance { [weak self] final in
-                        guard let self, !final.isEmpty,
-                              let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid })
-                        else { return }
-                        Self.flog("UPGRADE#\(uid) \(final.prefix(24))")
-                        self.pendingSnaps[idx].text = final
-                        self.emit()
+                        guard let self, !final.isEmpty else { return }
+                        if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
+                            Self.flog("UPGRADE#\(uid) \(final.prefix(24))")
+                            self.pendingSnaps[idx].text = final
+                            self.emit()
+                        } else {
+                            self.retroReplace(uid, final: final)
+                        }
                     }
                 } else {
                     self.startTailSegment()
@@ -374,7 +390,9 @@ final class WhisperRecorder {
                 // Whisper 没给出结果：实时版就是这句的最终版（安全网）
                 if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
                     let snap = self.pendingSnaps.remove(at: idx)
-                    if !snap.text.isEmpty { self.appendCommitted(snap.text) }
+                    if !snap.text.isEmpty {
+                        self.appendCommitted(snap.text, id: uid, source: .snapshot)
+                    }
                 }
                 self.emit()
             }
@@ -555,24 +573,57 @@ final class WhisperRecorder {
         // 版本选择：含英文（Whisper 的价值所在）→ Whisper 版替换；
         // 纯中文 → 保留实时引擎那句，不做无意义的替换跳动；
         // 实时那句为空（漏听）→ 无论中英都用 Whisper 版
-        let hasEnglish = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
-        Self.flog("CLAIM#\(uid) whisper=\(text.prefix(24)) snap=\((snapshot ?? "无").prefix(24)) en=\(hasEnglish)")
+        let hasEnglish = Self.containsEnglish(text)
+        let snapEnglish = snapshot.map(Self.containsEnglish) ?? false
+        Self.flog("CLAIM#\(uid) whisper=\(text.prefix(24)) snap=\((snapshot ?? "无").prefix(24)) en=\(hasEnglish)/\(snapEnglish)")
+        // 版本选择：
+        // - 双方都含英文 → 优先讯飞（快照；终稿迟到时追溯替换）
+        // - 仅 Whisper 含英文 → Whisper 版（讯飞终稿迟到且含英文时仍可追溯）
+        // - 纯中文 → 保留实时版；实时为空 → Whisper 兜底
         let chosen: String
+        let source: CommittedPart.Source
         if !tailActive && xfyunTail == nil {
             chosen = text
+            source = .whisper(hadEnglish: hasEnglish)
+        } else if hasEnglish, snapEnglish, let snapshot, !snapshot.isEmpty {
+            chosen = snapshot
+            source = .snapshot
         } else if hasEnglish {
             chosen = text
+            source = .whisper(hadEnglish: true)
         } else if let snapshot, !snapshot.isEmpty {
             chosen = snapshot
+            source = .snapshot
         } else {
             chosen = text
+            source = .whisper(hadEnglish: false)
         }
-        appendCommitted(chosen)
+        appendCommitted(chosen, id: uid, source: source)
     }
 
-    private func appendCommitted(_ text: String) {
-        let separator = language == "zh" ? "" : " "
-        committed = committed.isEmpty ? text : committed + separator + text
+    private static func containsEnglish(_ text: String) -> Bool {
+        text.range(of: "[A-Za-z]", options: .regularExpression) != nil
+    }
+
+    private func appendCommitted(_ text: String, id: Int, source: CommittedPart.Source) {
+        committedParts.append(CommittedPart(id: id, text: text, source: source))
+        emit()
+    }
+
+    /// 讯飞终稿迟到：按"两版都含英文优先讯飞"规则追溯替换已定稿句。
+    /// 快照来源的句子无条件用终稿升级（同引擎的更完整版本）
+    private func retroReplace(_ uid: Int, final: String) {
+        guard isRecording,
+              let idx = committedParts.firstIndex(where: { $0.id == uid }) else { return }
+        switch committedParts[idx].source {
+        case .snapshot:
+            break
+        case .whisper(let hadEnglish):
+            guard hadEnglish, Self.containsEnglish(final) else { return }
+        }
+        guard committedParts[idx].text != final else { return }
+        Self.flog("RETRO#\(uid) \(final.prefix(24))")
+        committedParts[idx].text = final
         emit()
     }
 
