@@ -16,6 +16,8 @@ private final class WhisperPipeline: @unchecked Sendable {
     var onInterim: ((String, Int) -> Void)?
     /// 停顿刚被检测到（解码开始前）：融合模式在此刻快照系统侧文字并重开尾巴段
     var onUtteranceEnd: ((Int) -> Void)?
+    /// 人声段实时音频外送（供云端实时引擎逐帧转写）；isStart 含前导音频
+    var onSpeechAudio: (([Float], _ isStart: Bool, Int) -> Void)?
     /// 这句解码为空/被判无效：调用方决定快照文字的去留
     var onUtteranceDropped: ((Int) -> Void)?
     var onLoadError: (() -> Void)?
@@ -128,6 +130,7 @@ private final class WhisperPipeline: @unchecked Sendable {
 
         if inSpeech {
             utterance.append(contentsOf: samples)
+            onSpeechAudio?(samples, false, gen)
             if rms < exitRMS { silentFrames += 1 } else { silentFrames = 0 }
             let silentSeconds = Double(silentFrames) * frameSeconds
             let utteranceSeconds = Double(utterance.count) / Double(Self.sampleRate)
@@ -150,6 +153,7 @@ private final class WhisperPipeline: @unchecked Sendable {
             inSpeech = true
             silentFrames = 0
             utterance = preRoll + samples
+            onSpeechAudio?(utterance, true, gen)
             preRoll = []
         } else {
             // 静音期：更新底噪估计（慢速 EMA，防止把渐强的人声学进去）
@@ -165,6 +169,7 @@ private final class WhisperPipeline: @unchecked Sendable {
                       generation gen: Int) {
         if inSpeech {
             utterance.append(contentsOf: chunk)
+            onSpeechAudio?(chunk, false, gen)
             if isSpeech { speechWindows += 1 }
             if isSilence { silentFrames += 1 } else { silentFrames = 0 }
             let silentSeconds = Double(silentFrames) * Double(Self.vadWindow)
@@ -188,6 +193,7 @@ private final class WhisperPipeline: @unchecked Sendable {
             silentFrames = 0
             speechWindows = 1
             utterance = preRoll + chunk
+            onSpeechAudio?(utterance, true, gen)
             preRoll = []
         } else {
             preRoll.append(contentsOf: chunk)
@@ -269,6 +275,9 @@ final class WhisperRecorder {
     // 融合模式：系统识别负责当前未完句的逐字实时显示（丝滑），
     // Whisper 每句定稿后原地替换（准确）。系统侧文字同时是安全网——
     // Whisper 闸门误丢的段，尾巴文字仍会保留进最终结果
+    /// 云端实时层（讯飞）：配置开启且凭证齐全时优先，失败回退 SFSpeech
+    private var xfyunTail: XFYunTailEngine?
+
     private let tailBox = RequestBox()
     private var tailRecognizer: SFSpeechRecognizer?
     private var tailTask: SFSpeechRecognitionTask?
@@ -331,7 +340,8 @@ final class WhisperRecorder {
         }
         pipeline.onUtteranceEnd = { [weak self] g in
             Task { @MainActor in
-                guard let self, g == self.generation, self.tailActive else { return }
+                guard let self, g == self.generation,
+                      self.tailActive || self.xfyunTail != nil else { return }
                 // 罕见时序防御：上一句还没定稿又来了新句，先把旧快照落袋
                 if let previous = self.pendingTail, !previous.isEmpty {
                     self.appendCommitted(previous)
@@ -339,7 +349,11 @@ final class WhisperRecorder {
                 self.pendingTail = self.joinTail(self.tailCommitted, self.tailPartial)
                 self.tailCommitted = ""
                 self.tailPartial = ""
-                self.startTailSegment()
+                if let tail = self.xfyunTail {
+                    tail.endUtterance()   // 终稿到达后会升级 pendingTail
+                } else {
+                    self.startTailSegment()
+                }
                 self.emit()
             }
         }
@@ -386,7 +400,48 @@ final class WhisperRecorder {
         tailRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
         tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
             && tailRecognizer?.isAvailable == true
-        pipe.interimEnabled = !tailActive
+
+        // 云端实时层：讯飞（大模型 → 经典版），不可用自动回退 SFSpeech
+        xfyunTail = nil
+        let cfg = ConfigStore.loadRaw()
+        if cfg?.realtimeEngine == "xfyun",
+           let appId = cfg?.xfyunAppId, !appId.isEmpty,
+           let apiKey = cfg?.xfyunApiKey, !apiKey.isEmpty,
+           let apiSecret = cfg?.xfyunApiSecret, !apiSecret.isEmpty {
+            let engine = XFYunTailEngine(appId: appId, apiKey: apiKey, apiSecret: apiSecret)
+            engine.onPartial = { [weak self] text in
+                guard let self, self.isRecording else { return }
+                self.tailPartial = text
+                self.emit()
+            }
+            engine.onFinal = { [weak self] text in
+                guard let self, self.isRecording || self.pendingTail != nil else { return }
+                // 会话终稿比停顿快照更完整：若这句还没被 Whisper 定稿就升级快照
+                if !text.isEmpty, self.pendingTail != nil {
+                    self.pendingTail = text
+                    self.emit()
+                }
+            }
+            engine.onUnavailable = { [weak self] in
+                guard let self else { return }
+                // 三级降级末端：回退系统 SFSpeech
+                self.xfyunTail = nil
+                if self.tailActive { self.startTailSegment() }
+                self.emit()
+            }
+            xfyunTail = engine
+            pipe.onSpeechAudio = { [weak self] samples, isStart, g in
+                Task { @MainActor in
+                    guard let self, g == self.generation,
+                          let tail = self.xfyunTail else { return }
+                    if isStart { tail.startUtterance() }
+                    tail.feed(samples)
+                }
+            }
+        } else {
+            pipe.onSpeechAudio = nil
+        }
+        pipe.interimEnabled = !tailActive && xfyunTail == nil
 
         input.removeTap(onBus: 0)
         let box = tailBox
@@ -423,7 +478,7 @@ final class WhisperRecorder {
         }
         isRecording = true
         onStateChange?(true)
-        if tailActive { startTailSegment() }
+        if tailActive, xfyunTail == nil { startTailSegment() }
     }
 
     /// 开一段系统识别（每次 Whisper 定稿后重开，让尾巴只覆盖"未定稿"部分）
@@ -481,7 +536,7 @@ final class WhisperRecorder {
         // 系统那句为空（漏听）→ 无论中英都用 Whisper 版
         let hasEnglish = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
         let chosen: String
-        if !tailActive {
+        if !tailActive && xfyunTail == nil {
             chosen = text
         } else if hasEnglish {
             chosen = text
@@ -502,7 +557,8 @@ final class WhisperRecorder {
 
     private func emit() {
         let separator = language == "zh" ? "" : " "
-        let live = tailActive ? joinTail(tailCommitted, tailPartial) : interim
+        let hasTail = tailActive || xfyunTail != nil
+        let live = hasTail ? joinTail(tailCommitted, tailPartial) : interim
         var parts = [committed]
         if let pending = pendingTail, !pending.isEmpty { parts.append(pending) }
         if !live.isEmpty { parts.append(live) }
@@ -513,6 +569,8 @@ final class WhisperRecorder {
     func stop() {
         guard isRecording else { return }
         isRecording = false
+        xfyunTail?.stop()
+        xfyunTail = nil
         tailBox.finish()
         tailTask?.cancel()
         tailTask = nil

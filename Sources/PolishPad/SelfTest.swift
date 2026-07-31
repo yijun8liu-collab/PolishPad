@@ -180,6 +180,19 @@ enum SelfTest {
                   #"["这是一条超过二十个字符长度限制的过长建议应当被过滤掉","保留"]"#)
                   == ["保留"])
 
+        // 7.6 讯飞鉴权签名与 wpgs 动态修正组装
+        let xfURL = XFYunAuth.signedURL(host: "iat.xf-yun.com", path: "/v1",
+                                        apiKey: "k", apiSecret: "s",
+                                        date: Date(timeIntervalSince1970: 0))
+        check("xfyun.url", xfURL?.host == "iat.xf-yun.com"
+              && xfURL?.query?.contains("authorization=") == true
+              && xfURL?.query?.contains("date=") == true)
+        var asm = XFYunWPGSAssembler()
+        asm.apply(sn: 1, text: "今天", pgs: nil, rg: nil)
+        asm.apply(sn: 2, text: "天气", pgs: "apd", rg: nil)
+        asm.apply(sn: 3, text: "今天天气不错", pgs: "rpl", rg: [1, 2])
+        check("xfyun.wpgs", asm.text == "今天天气不错")
+
         // 8. 版本比较
         check("semver.newer", SettingsView.isVersion("0.5.0", newerThan: "0.4.9"))
         check("semver.equal", !SettingsView.isVersion("0.5.0", newerThan: "0.5.0"))

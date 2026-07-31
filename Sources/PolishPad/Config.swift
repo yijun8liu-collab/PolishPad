@@ -113,6 +113,12 @@ struct AppConfig: Codable {
     var autoStartDictation: Bool? = nil
     /// 语音识别引擎："system"（默认）或 "whisper"（本地大模型，中英混合更准）
     var speechEngine: String? = nil
+    /// 实时字幕引擎（Whisper 融合模式的实时层）："system"（默认）或
+    /// "xfyun"（讯飞云端：大模型 → 经典版 → 系统 三级自动降级）
+    var realtimeEngine: String? = nil
+    var xfyunAppId: String? = nil
+    var xfyunApiKey: String? = nil
+    var xfyunApiSecret: String? = nil
     /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，
     /// 中/EN 共用；删除/清空则恢复内置
     var presetOverrides: [String: String]? = nil

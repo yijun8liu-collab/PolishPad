@@ -29,6 +29,10 @@ struct SettingsView: View {
     @State private var idlePrefetch = true
     @State private var autoStartDictation = false
     @State private var useWhisper = false
+    @State private var realtimeEngine = "system"
+    @State private var xfyunAppId = ""
+    @State private var xfyunApiKey = ""
+    @State private var xfyunApiSecret = ""
     @ObservedObject private var whisperStore = WhisperModelStore.shared
     @State private var uiEnglish = UserDefaults.standard.bool(forKey: "outputEnglish")
     /// 面板尺寸档位：small/medium/large/custom（custom=用户拖拽出的尺寸）
@@ -178,6 +182,25 @@ struct SettingsView: View {
                             if enabled { WhisperModelStore.shared.startDownloadIfNeeded() }
                         }
                     whisperStatusRow
+                    Picker(UILang.t("实时字幕引擎", "Live caption engine"),
+                           selection: $realtimeEngine) {
+                        Text(UILang.t("系统识别", "System")).tag("system")
+                        Text(UILang.t("讯飞云端（自动降级）", "iFlytek cloud (auto-fallback)"))
+                            .tag("xfyun")
+                    }
+                    if realtimeEngine == "xfyun" {
+                        TextField("APPID", text: $xfyunAppId)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("APIKey", text: $xfyunApiKey)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("APISecret", text: $xfyunApiSecret)
+                            .textFieldStyle(.roundedBorder)
+                        Text(UILang.t(
+                            "在讯飞开放平台（xfyun.cn）创建应用并开通「中文识别大模型」与「语音听写」。听写时语音将发送至讯飞云端；额度不足自动降级经典版，仍失败回退系统识别。仅在 Whisper 引擎开启时生效。",
+                            "Create an app at xfyun.cn and enable the big-model + classic dictation services. Audio is sent to iFlytek cloud while dictating; falls back to the classic API on quota issues, then to the system engine. Takes effect only with the Whisper engine on."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Text(UILang.t(
                         "中英混合识别显著更准（large-v3-turbo，全程本地运行）。说完一句停顿约 1 秒整句出现，不逐字出字。首次开启需下载约 874MB 模型；Apple Silicon 体验最佳。",
                         "Much better mixed Chinese-English accuracy (large-v3-turbo, fully local). Text appears sentence-by-sentence after a ~1s pause instead of word-by-word. First enable downloads a ~874MB model; best on Apple Silicon."))
@@ -543,6 +566,10 @@ struct SettingsView: View {
         idlePrefetch = config.idlePrefetch ?? true
         autoStartDictation = config.autoStartDictation ?? false
         useWhisper = config.speechEngine == "whisper"
+        realtimeEngine = config.realtimeEngine ?? "system"
+        xfyunAppId = config.xfyunAppId ?? ""
+        xfyunApiKey = config.xfyunApiKey ?? ""
+        xfyunApiSecret = config.xfyunApiSecret ?? ""
         let size = PanelSize.current
         panelSizeChoice = PanelSize.presets.first {
             abs($0.w - size.width) < 2 && abs($0.h - size.height) < 2
@@ -601,6 +628,10 @@ struct SettingsView: View {
             idlePrefetch: idlePrefetch,
             autoStartDictation: autoStartDictation,
             speechEngine: useWhisper ? "whisper" : nil,
+            realtimeEngine: realtimeEngine == "system" ? nil : realtimeEngine,
+            xfyunAppId: xfyunAppId.isEmpty ? nil : xfyunAppId.trimmingCharacters(in: .whitespaces),
+            xfyunApiKey: xfyunApiKey.isEmpty ? nil : xfyunApiKey.trimmingCharacters(in: .whitespaces),
+            xfyunApiSecret: xfyunApiSecret.isEmpty ? nil : xfyunApiSecret.trimmingCharacters(in: .whitespaces),
             presetOverrides: normalizedOverrides(),
             customScenarios: normalizedScenarios()
         )
