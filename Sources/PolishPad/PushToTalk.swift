@@ -5,6 +5,20 @@ import AppKit
 /// - 短按 <0.35s（锁定）：再按一次结束，Esc 取消
 /// 结束后：听写定稿 → 当前场景 LLM 润色 → 粘贴到焦点光标处。
 /// 原文进历史（可找回），失败时原始转写留在剪贴板。
+/// 一次性闸门（跨线程安全）：LLM 首字到达时触发绽开，仅一次
+final class BloomGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+
+    func fireOnce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
+}
+
 /// 按时间节流（跨线程安全）：流式回调降频到人眼刷新节奏
 final class TimeThrottle: @unchecked Sendable {
     private let lock = NSLock()
@@ -90,7 +104,7 @@ final class PushToTalkController {
                 // 短按 → 锁定录音
                 state = .locked
                 HUD.shared.updateWorking(UILang.t(
-                    "说话中… 结束请再按\(option.symbol)",
+                    "说话中… 结束请再按 \(option.symbol)",
                     "Speaking… press \(option.symbol) again to finish"))
                 armLockTimeout()
             } else {
@@ -117,7 +131,7 @@ final class PushToTalkController {
         liveText = ""
         lastLiveUpdate = .distantPast
         targetApp = NSWorkspace.shared.frontmostApplication
-        HUD.shared.showWorking(UILang.t("聆听中", "Listening"))
+        HUD.shared.showListening(UILang.t("聆听中", "Listening"))
 
         let config = ConfigStore.loadRaw()
         let localeId = config?.speechLocale ?? "zh-CN"
@@ -133,16 +147,21 @@ final class PushToTalkController {
             self?.teardownRecorders()
             self?.state = .idle
         }
+        let applyLevel: (Float) -> Void = { level in
+            HUD.shared.updateLevel(level)
+        }
         if config?.speechEngine == "whisper", WhisperModelStore.isReady {
             let r = WhisperRecorder()
             r.onPartial = applyLive
             r.onError = onError
+            r.onLevel = applyLevel
             whisperRecorder = r
             r.start(localeId: localeId)
         } else {
             let r = SpeechRecorder()
             r.onPartial = applyLive
             r.onError = onError
+            r.onLevel = applyLevel
             systemRecorder = r
             r.start(localeId: localeId)
         }
@@ -159,7 +178,8 @@ final class PushToTalkController {
     private func finishRecording() {
         lockTimeout?.cancel()
         state = .processing
-        HUD.shared.updateWorking(UILang.t("整理中", "Finalizing"))
+        // V2 预备-收束：气泡鼓一口气再吸入成光点，光点呼吸陪伴润色
+        HUD.shared.condense()
         systemRecorder?.stop()
         if let recorder = whisperRecorder {
             // 双通道竞速：收尾解码完成即刻走；超过 1 秒没等到就用当前
@@ -201,16 +221,19 @@ final class PushToTalkController {
         let snapshot = ClipboardSnapshot.capture()
         let pasteboard = NSPasteboard.general
         do {
-            // HUD 直接滚动润色产出：等待感变成"看着稿子长出来"
+            // HUD 编舞：LLM 首字到达即从光点绽开，随后流式滚动产出
             let throttle = TimeThrottle(interval: 0.12)
+            let bloomed = BloomGate()
             let output = try await LLMClient.polishOnce(
                 transcript, targetBundleID: targetApp?.bundleIdentifier
             ) { partial in
-                guard throttle.shouldFire() else { return }
                 let tail = String(partial.suffix(26))
-                Task { @MainActor in
-                    HUD.shared.updateWorking(tail)
+                if bloomed.fireOnce() {
+                    Task { @MainActor in HUD.shared.bloom(tail) }
+                    return
                 }
+                guard throttle.shouldFire() else { return }
+                Task { @MainActor in HUD.shared.updateWorking(tail) }
             }
             if Task.isCancelled { snapshot.restore(); return }
             // 原始转写进历史，随时可找回
@@ -234,7 +257,7 @@ final class PushToTalkController {
             ReplacementUndo.shared.record(pasted: output, replaced: nil, app: targetApp)
             try? await Task.sleep(nanoseconds: 600_000_000)
             snapshot.restore()
-            HUD.shared.flashSuccess(UILang.t("已粘贴", "Pasted"))
+            HUD.shared.successInPlace(UILang.t("已粘贴", "Pasted"))
             NSSound(named: "Glass")?.play()
         } catch {
             // 失败兜底：原始转写留在剪贴板，说过的话不丢

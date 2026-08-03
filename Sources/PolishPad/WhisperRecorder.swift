@@ -282,6 +282,8 @@ final class WhisperRecorder {
     var onPartial: ((String) -> Void)?
     var onStateChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
+    /// 麦克风实时音量（0-1 粗归一），驱动 HUD 波形
+    var onLevel: ((Float) -> Void)?
 
     private let audioEngine = AVAudioEngine()
     private let pipeline = WhisperPipeline()
@@ -521,6 +523,12 @@ final class WhisperRecorder {
                   let channel = out.floatChannelData?[0] else { return }
             let samples = Array(UnsafeBufferPointer(start: channel,
                                                     count: Int(out.frameLength)))
+            var sum: Float = 0
+            for v in samples { sum += v * v }
+            let rms = (sum / Float(max(samples.count, 1))).squareRoot()
+            Task { @MainActor [weak self] in
+                self?.onLevel?(min(1, rms * 14))
+            }
             workQueue.async { pipe.process(samples, generation: gen) }
         }
 

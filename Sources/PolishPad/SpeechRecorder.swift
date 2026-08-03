@@ -41,6 +41,8 @@ final class SpeechRecorder {
     var onPartial: ((String) -> Void)?
     var onStateChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
+    /// 麦克风实时音量（0-1 粗归一），驱动 HUD 波形
+    var onLevel: ((Float) -> Void)?
 
     private let audioEngine = AVAudioEngine()
     private let requestBox = RequestBox()
@@ -122,8 +124,17 @@ final class SpeechRecorder {
         }
         input.removeTap(onBus: 0)
         let box = requestBox
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             box.append(buffer)
+            if let channel = buffer.floatChannelData?[0] {
+                var sum: Float = 0
+                let n = Int(buffer.frameLength)
+                for i in 0..<n { sum += channel[i] * channel[i] }
+                let rms = (sum / Float(max(n, 1))).squareRoot()
+                Task { @MainActor in
+                    self?.onLevel?(min(1, rms * 14))
+                }
+            }
         }
 
         audioEngine.prepare()
