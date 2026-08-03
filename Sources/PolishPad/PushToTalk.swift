@@ -5,6 +5,23 @@ import AppKit
 /// - 短按 <0.35s（锁定）：再按一次结束，Esc 取消
 /// 结束后：听写定稿 → 当前场景 LLM 润色 → 粘贴到焦点光标处。
 /// 原文进历史（可找回），失败时原始转写留在剪贴板。
+/// 按时间节流（跨线程安全）：流式回调降频到人眼刷新节奏
+final class TimeThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private let interval: TimeInterval
+    private var last = Date.distantPast
+
+    init(interval: TimeInterval) { self.interval = interval }
+
+    func shouldFire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard Date().timeIntervalSince(last) >= interval else { return false }
+        last = Date()
+        return true
+    }
+}
+
 @MainActor
 final class PushToTalkController {
     /// 可选热键：单个右侧修饰键（左手打字右手够得着，且不与输入法冲突）
@@ -142,10 +159,9 @@ final class PushToTalkController {
         HUD.shared.updateWorking(UILang.t("整理中", "Finalizing"))
         systemRecorder?.stop()
         if let recorder = whisperRecorder {
-            // 精确信号：收尾解码完成即走，只留 0.35s 给讯飞终稿精修
+            // 精确信号：收尾解码完成 + 在途终稿清零（或超时）即刻走，零盲等
             recorder.stop { [weak self] in
                 self?.processingTask = Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 350_000_000)
                     if Task.isCancelled { return }
                     await self?.runPipeline()
                 }
@@ -173,15 +189,15 @@ final class PushToTalkController {
         let snapshot = ClipboardSnapshot.capture()
         let pasteboard = NSPasteboard.general
         do {
-            let progress = ProgressThrottle()
+            // HUD 直接滚动润色产出：等待感变成"看着稿子长出来"
+            let throttle = TimeThrottle(interval: 0.12)
             let output = try await LLMClient.polishOnce(
                 transcript, targetBundleID: targetApp?.bundleIdentifier
             ) { partial in
-                let count = partial.count
-                guard progress.shouldReport(count) else { return }
+                guard throttle.shouldFire() else { return }
+                let tail = String(partial.suffix(26))
                 Task { @MainActor in
-                    HUD.shared.updateWorking(UILang.t("优化中… \(count) 字",
-                                                      "Refining… \(count) chars"))
+                    HUD.shared.updateWorking(tail)
                 }
             }
             if Task.isCancelled { snapshot.restore(); return }

@@ -75,6 +75,9 @@ final class XFYunSession: NSObject, URLSessionWebSocketDelegate {
     /// 授权类错误（额度不足等）与其他失败区分，供上层决定降级方向
     var onError: ((_ authIssue: Bool) -> Void)?
 
+    let createdAt = Date()
+    var isFinished: Bool { finished }
+
     private let variant: Variant
     private let appId: String
     private var task: URLSessionWebSocketTask?
@@ -303,10 +306,38 @@ final class XFYunTailEngine {
         self.apiSecret = apiSecret
     }
 
+    /// 预连接的下一个会话：WebSocket 握手（200-400ms）提前完成，
+    /// 开口瞬间首帧直接发——不发音频不产生计费时长
+    private var preconnected: XFYunSession?
+
+    /// 在按下热键/开始听写时调用：把握手成本藏进用户开口前的时间里
+    func preconnect() {
+        guard !unavailable else { return }
+        if let pre = preconnected, !pre.isFinished,
+           Date().timeIntervalSince(pre.createdAt) < 10 { return }
+        preconnected?.cancel()
+        preconnected = XFYunSession(variant: variant, appId: appId,
+                                    apiKey: apiKey, apiSecret: apiSecret)
+        // 预连接阶段的失败不降级（可能是瞬时网络），真正用时再按正路处理
+        preconnected?.onError = { [weak self] _ in self?.preconnected = nil }
+        Self.xlog("PRECONNECT \(variantName)")
+    }
+
     func startUtterance() {
         guard !unavailable else { return }
         utteranceAudio = []
-        openSession()
+        // 有新鲜的预连接就直接领养，省一次握手
+        if let pre = preconnected, !pre.isFinished,
+           Date().timeIntervalSince(pre.createdAt) < 10 {
+            preconnected = nil
+            session = pre
+            wire(pre)
+            Self.xlog("ADOPT-PRECONNECTED \(variantName)")
+        } else {
+            preconnected?.cancel()
+            preconnected = nil
+            openSession()
+        }
     }
 
     private func openSession() {
@@ -319,6 +350,10 @@ final class XFYunTailEngine {
         }
         Self.xlog("OPEN \(variantName)")
         session = s
+        wire(s)
+    }
+
+    private func wire(_ s: XFYunSession) {
         s.onPartial = { [weak self] text in self?.onPartial?(text) }
         s.onFinal = { [weak self] text in
             Self.xlog("FINAL \(text.prefix(20))")
@@ -369,10 +404,14 @@ final class XFYunTailEngine {
         }
         session?.finish()
         session = nil
+        // 为下一句提前握手
+        preconnect()
     }
 
     func stop() {
         session?.cancel()
         session = nil
+        preconnected?.cancel()
+        preconnected = nil
     }
 }

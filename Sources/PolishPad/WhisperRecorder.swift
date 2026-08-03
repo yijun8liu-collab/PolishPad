@@ -312,6 +312,8 @@ final class WhisperRecorder {
     private var tailActive = false
     /// 尾巴段代次：老任务被取消后的迟到回调直接丢弃，防止定稿后旧句复活
     private var tailGen = 0
+    /// 在途的讯飞终稿数：stop 收尾时据此决定还等不等（方案二：不再盲等）
+    private var pendingXfyunFinals = 0
     /// 停顿快照队列：每句的实时侧版本按句子编号排队，等对应的 Whisper
     /// 定稿来"二选一"。队列化后 Whisper 慢半拍也不会重复提交
     private var pendingSnaps: [(id: Int, text: String)] = []
@@ -375,8 +377,11 @@ final class WhisperRecorder {
                 self.tailPartial = ""
                 if let tail = self.xfyunTail {
                     // 终稿到达：这句还没定稿 → 升级快照；已定稿 → 按规则追溯替换
+                    self.pendingXfyunFinals += 1
                     tail.endUtterance { [weak self] final in
-                        guard let self, !final.isEmpty else { return }
+                        guard let self else { return }
+                        self.pendingXfyunFinals = max(0, self.pendingXfyunFinals - 1)
+                        guard !final.isEmpty else { return }
                         if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
                             Self.flog("UPGRADE#\(uid) \(final.prefix(24))")
                             self.pendingSnaps[idx].text = final
@@ -458,6 +463,7 @@ final class WhisperRecorder {
                 self.emit()
             }
             xfyunTail = engine
+            engine.preconnect()   // 握手藏进开口前
             pipe.onSpeechAudio = { [weak self] samples, isStart, g in
                 Task { @MainActor in
                     guard let self, g == self.generation,
@@ -662,14 +668,26 @@ final class WhisperRecorder {
         audioEngine.inputNode.removeTap(onBus: 0)
         let gen = generation
         let pipe = pipeline
-        queue.async {
+        queue.async { [weak self] in
             // 收尾：把最后未满静音阈值的一句也解码出来（模型常驻不释放）
             pipe.flush(generation: gen)
             if let completion {
-                Task { @MainActor in completion() }
+                Task { @MainActor in
+                    await self?.awaitPendingFinals()
+                    completion()
+                }
             }
         }
         onStateChange?(false)
+    }
+
+    /// 只在真有讯飞终稿在途时才等（每 80ms 查一次，上限 800ms），
+    /// 没有在途终稿就零等待
+    private func awaitPendingFinals() async {
+        let deadline = Date().addingTimeInterval(0.8)
+        while pendingXfyunFinals > 0, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+        }
     }
 
     /// 术语表注入提示词：Whisper 对 initial_prompt 里的词有明显偏置，
