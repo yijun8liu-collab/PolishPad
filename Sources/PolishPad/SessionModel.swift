@@ -467,7 +467,11 @@ final class SessionModel: ObservableObject {
                 + "same-sound wrong words (e.g. \u{201C}手艺\u{201D} or \u{201C}收银\u{201D} written where "
                 + "\u{201C}收益\u{201D} was meant): decide strictly from surrounding context — "
                 + "in revenue/ads/investment talk restore \u{201C}收益\u{201D}, but if the text "
-                + "genuinely discusses craftsmanship or a cashier, keep the original. "
+                + "genuinely discusses craftsmanship or a cashier, keep the original; "
+                + "(3) whole-text consistency: when the same-sounding word appears "
+                + "with different spellings (e.g. \u{201C}残渣\u{201D} earlier but \u{201C}残差\u{201D} later), "
+                + "unify to the contextually correct one — a correct later occurrence "
+                + "is strong evidence for fixing an earlier mis-transcription. "
                 + "Only fix words clearly implausible in context; keep uncertain ones as-is."
         }
         return "\n\n语音输入纠错：草稿可能来自语音识别，存在同音/近音误写，两类都要纠，"
@@ -477,6 +481,9 @@ final class SessionModel: ObservableObject {
             + "2) 中文同音别字（如把「收益」误写成「手艺」或「收银」）——"
             + "严格根据上下文判断词义是否通顺：谈业绩/广告/投资时「手艺」「收银」"
             + "多半应为「收益」；但语境真在谈手工技艺或收银台时必须保留原词。\n"
+            + "3) 全文一致性：同一发音的词在文中出现不同写法时"
+            + "（如前文写「残渣」、后文写「残差」），用全文语境判断哪个正确并**统一**——"
+            + "后文的正确写法是纠正前文误写的有力证据，反之亦然。\n"
             + "只纠正语境中明显不通的词，不确定的保留原样。"
     }
 
