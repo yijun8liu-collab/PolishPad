@@ -7,6 +7,10 @@ import whisper
 /// 与主线程仅通过 onCommit 回调交互
 private final class WhisperPipeline: @unchecked Sendable {
     let transcriber = WhisperTranscriber.shared
+    /// 解码专用串行队列：与 VAD/喂音队列分离，长语音字幕不再被解码卡顿；
+    /// 串行保证 onCommit 按句子编号有序到达
+    let decodeQueue = DispatchQueue(label: "polishpad.whisper.decode",
+                                    qos: .userInitiated)
     var language = "zh"
     var prompt = ""
     var generation = 0
@@ -48,7 +52,8 @@ private final class WhisperPipeline: @unchecked Sendable {
 
     static let sampleRate = 16000
     static let endSilence = 0.75
-    static let maxUtterance = 28.0
+    /// 连续不停顿说话的强制切段上限：越小收尾积压越少（12s 解码约 0.5s）
+    static let maxUtterance = 12.0
     static let preRollSeconds = 0.3
 
     /// 进入人声：高出底噪即触发。宁多勿漏——误收的噪声段有后级
@@ -247,15 +252,20 @@ private final class WhisperPipeline: @unchecked Sendable {
         let uid = utteranceId
         onUtteranceEnd?(uid, gen)
         dlog("DECODE#\(uid) \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
-        guard let text = transcriber.transcribe(
-            samples: audio, language: language, prompt: prompt),
-            !text.isEmpty else {
-            dlog("EMPTY-RESULT#\(uid)")
-            onInterim?("", gen)
-            onUtteranceDropped?(uid, gen)
-            return
+        let lang = language
+        let promptText = prompt
+        decodeQueue.async { [weak self] in
+            guard let self else { return }
+            guard let text = self.transcriber.transcribe(
+                samples: audio, language: lang, prompt: promptText),
+                !text.isEmpty else {
+                self.dlog("EMPTY-RESULT#\(uid)")
+                self.onInterim?("", gen)
+                self.onUtteranceDropped?(uid, gen)
+                return
+            }
+            self.onCommit?(text, uid, gen)
         }
-        onCommit?(text, uid, gen)
     }
 
     // 模型常驻由 WhisperTranscriber.shared 的空闲计时器管理，不随停释放
@@ -688,12 +698,16 @@ final class WhisperRecorder {
         let gen = generation
         let pipe = pipeline
         queue.async { [weak self] in
-            // 收尾：把最后未满静音阈值的一句也解码出来（模型常驻不释放）
+            // 收尾：把最后未满静音阈值的一句也解码出来（模型常驻不释放）。
+            // 完成信号排在解码队列末尾——flush 把解码任务先入队，此标记
+            // 自然在其后执行
             pipe.flush(generation: gen)
-            if let completion {
-                Task { @MainActor in
-                    await self?.awaitPendingFinals()
-                    completion()
+            pipe.decodeQueue.async {
+                if let completion {
+                    Task { @MainActor in
+                        await self?.awaitPendingFinals()
+                        completion()
+                    }
                 }
             }
         }

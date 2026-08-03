@@ -162,13 +162,22 @@ final class PushToTalkController {
         HUD.shared.updateWorking(UILang.t("整理中", "Finalizing"))
         systemRecorder?.stop()
         if let recorder = whisperRecorder {
-            // 精确信号：收尾解码完成 + 在途终稿清零（或超时）即刻走，零盲等
-            recorder.stop { [weak self] in
-                self?.processingTask = Task { [weak self] in
+            // 双通道竞速：收尾解码完成即刻走；超过 1 秒没等到就用当前
+            // 已有文本（讯飞/桥版本）收工——LLM 纠错兜底，不为完美死等
+            var fired = false
+            let go: @MainActor () -> Void = { [weak self] in
+                guard let self, !fired else { return }
+                fired = true
+                self.processingTask = Task { [weak self] in
                     if Task.isCancelled { return }
                     await self?.runPipeline()
                 }
             }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                go()
+            }
+            recorder.stop { go() }
         } else {
             // 系统引擎：partial 已实时到位，稍候片刻即可
             processingTask = Task { [weak self] in
