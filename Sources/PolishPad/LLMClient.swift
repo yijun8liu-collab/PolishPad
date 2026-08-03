@@ -84,7 +84,10 @@ enum LLMClient {
         let messages = [
             ChatMessage(role: "system",
                         content: config.resolvedSystemPrompt(english: english,
-                                                             scenario: scenario)),
+                                                             scenario: scenario)
+                            // 语音误识纠错与面板流程同规格注入（划词/按住说话
+                            // 的输入常来自听写，恰是同音误识重灾区）
+                            + SessionModel.asrCorrectionBlock(english: english)),
             ChatMessage(role: "user", content: "<input>\n\(input)\n</input>"),
         ]
         return try await completeStreaming(messages: messages, config: config, onPartial: onPartial)

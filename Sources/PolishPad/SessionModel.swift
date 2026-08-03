@@ -456,7 +456,7 @@ final class SessionModel: ObservableObject {
 
     /// 语音输入纠错：所有场景统一注入。草稿常来自语音识别，同音/近音
     /// 误识（尤其技术词被写成无意义音译汉字）应在润色时自动还原
-    static func asrCorrectionBlock(english: Bool) -> String {
+    nonisolated static func asrCorrectionBlock(english: Bool) -> String {
         if english {
             return "\n\nSpeech-input correction: the draft may come from speech "
                 + "recognition and can contain homophone mis-transcriptions — "
