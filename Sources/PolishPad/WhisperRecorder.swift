@@ -399,6 +399,11 @@ final class WhisperRecorder {
                         self.pendingXfyunFinals = max(0, self.pendingXfyunFinals - 1)
                         guard !final.isEmpty else { return }
                         if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
+                            let current = self.pendingSnaps[idx].text
+                            guard final.count * 4 >= current.count * 3 else {
+                                Self.flog("FINAL-TOO-SHORT#\(uid) final=\(final.count)字 快照=\(current.count)字")
+                                return
+                            }
                             Self.flog("UPGRADE#\(uid) \(final.prefix(24))")
                             self.pendingSnaps[idx].text = final
                             self.emit()
@@ -621,18 +626,27 @@ final class WhisperRecorder {
         // - 双方都含英文 → 优先讯飞（快照；终稿迟到时追溯替换）
         // - 仅 Whisper 含英文 → Whisper 版（讯飞终稿迟到且含英文时仍可追溯）
         // - 纯中文 → 保留实时版；实时为空 → Whisper 兜底
+        // 长度防线：讯飞实时文字比语音慢 1-2s，快照可能缺句尾；缺得
+        // 明显（<75%）就弃用快照，保 Whisper 完整版——宁可术语差点，
+        // 不能吞内容
+        let snapUsable = snapshot.map {
+            !$0.isEmpty && $0.count * 4 >= text.count * 3
+        } ?? false
+        if let snapshot, !snapshot.isEmpty, !snapUsable {
+            Self.flog("SNAP-TOO-SHORT#\(uid) snap=\(snapshot.count)字 whisper=\(text.count)字")
+        }
         let chosen: String
         let source: CommittedPart.Source
         if !tailActive && xfyunTail == nil {
             chosen = text
             source = .whisper(hadEnglish: hasEnglish)
-        } else if hasEnglish, snapEnglish, let snapshot, !snapshot.isEmpty {
+        } else if hasEnglish, snapEnglish, snapUsable, let snapshot {
             chosen = snapshot
             source = .snapshot
         } else if hasEnglish {
             chosen = text
             source = .whisper(hadEnglish: true)
-        } else if let snapshot, !snapshot.isEmpty {
+        } else if snapUsable, let snapshot {
             chosen = snapshot
             source = .snapshot
         } else {
@@ -663,6 +677,11 @@ final class WhisperRecorder {
             guard hadEnglish, Self.containsEnglish(final) else { return }
         }
         guard committedParts[idx].text != final else { return }
+        // 终稿只覆盖了半句（会话中途开的/断的）时禁止覆盖完整版
+        guard final.count * 4 >= committedParts[idx].text.count * 3 else {
+            Self.flog("RETRO-TOO-SHORT#\(uid) final=\(final.count)字 现有=\(committedParts[idx].text.count)字")
+            return
+        }
         Self.flog("RETRO#\(uid) \(final.prefix(24))")
         committedParts[idx].text = final
         emit()
