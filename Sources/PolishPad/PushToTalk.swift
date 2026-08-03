@@ -71,9 +71,7 @@ final class PushToTalkController {
             if Date().timeIntervalSince(downAt) < 0.35 {
                 // 短按 → 锁定录音
                 state = .locked
-                HUD.shared.updateWorking(UILang.t(
-                    "聆听中…（再按一次结束 · Esc 取消）",
-                    "Listening… (press again to finish · Esc cancels)"))
+                HUD.shared.updateWorking(UILang.t("再按结束", "Tap again to finish"))
                 armLockTimeout()
             } else {
                 finishRecording()   // 对讲：松开结束
@@ -99,7 +97,7 @@ final class PushToTalkController {
         liveText = ""
         lastLiveUpdate = .distantPast
         targetApp = NSWorkspace.shared.frontmostApplication
-        HUD.shared.showWorking(UILang.t("聆听中…", "Listening…"))
+        HUD.shared.showWorking(UILang.t("聆听中", "Listening"))
 
         let config = ConfigStore.loadRaw()
         let localeId = config?.speechLocale ?? "zh-CN"
@@ -108,15 +106,7 @@ final class PushToTalkController {
             self.liveText = text
             self.lastLiveUpdate = Date()
             let tail = String(text.suffix(26))
-            let hint: String
-            if case .locked = self.state {
-                hint = UILang.t("（再按结束）", " (press to finish)")
-            } else {
-                hint = ""
-            }
-            HUD.shared.updateWorking(tail.isEmpty
-                ? UILang.t("聆听中…", "Listening…") + hint
-                : tail + hint)
+            if !tail.isEmpty { HUD.shared.updateWorking(tail) }
         }
         let onError: (String) -> Void = { [weak self] message in
             HUD.shared.flashSuccess(message)
@@ -149,7 +139,7 @@ final class PushToTalkController {
     private func finishRecording() {
         lockTimeout?.cancel()
         state = .processing
-        HUD.shared.updateWorking(UILang.t("整理中…", "Finalizing…"))
+        HUD.shared.updateWorking(UILang.t("整理中", "Finalizing"))
         whisperRecorder?.stop()
         systemRecorder?.stop()
         let stopAt = Date()
@@ -218,9 +208,9 @@ final class PushToTalkController {
             // 失败兜底：原始转写留在剪贴板，说过的话不丢
             pasteboard.clearContents()
             pasteboard.setString(transcript, forType: .string)
-            HUD.shared.flashSuccess(UILang.t(
-                "优化失败，原始转写已复制：\(error.localizedDescription)",
-                "Refine failed — raw transcript copied: \(error.localizedDescription)"))
+            _ = error
+            HUD.shared.flashSuccess(UILang.t("优化失败，原文已复制",
+                                             "Refine failed — raw text copied"))
         }
     }
 

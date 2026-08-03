@@ -12,12 +12,21 @@ enum UILang {
     }
 }
 
+/// HUD 内容模型：更新文字时不重建视图、不改窗口几何——实时字幕稳定不跳
+@MainActor
+final class HUDModel: ObservableObject {
+    @Published var text = ""
+    @Published var style: HUDView.Style = .working
+    @Published var light = false
+}
+
 /// 光标旁的悬浮状态提示：不抢焦点、不响应鼠标，用于划词优化的过程反馈
 @MainActor
 final class HUD {
     static let shared = HUD()
 
     private let panel: NSPanel
+    private let model = HUDModel()
     /// 防止旧的自动隐藏计时器关掉新一轮的提示
     private var sessionToken = 0
 
@@ -40,38 +49,46 @@ final class HUD {
 
     func showWorking(_ text: String) {
         sessionToken += 1
-        present(HUDView(text: text, style: .working))
+        present(text: text, style: .working)
     }
 
-    /// 更新进行中的文字但不重新定位（流式进度用，避免气泡跟着鼠标跳）
+    /// 更新进行中的文字：同一视图原地换字，窗口几何纹丝不动（流式字幕稳定）
     func updateWorking(_ text: String) {
         guard panel.isVisible else { return }
-        let topY = panel.frame.maxY
-        let x = panel.frame.minX
-        let hosting = NSHostingView(rootView: HUDView(text: text, style: .working))
-        panel.contentView = hosting
-        let size = hosting.fittingSize
-        panel.setContentSize(size)
-        panel.setFrameOrigin(NSPoint(x: x, y: topY - size.height))
+        model.text = text
+        model.style = .working
     }
 
     func flashSuccess(_ text: String) {
         sessionToken += 1
         let token = sessionToken
-        present(HUDView(text: text, style: .success))
+        present(text: text, style: .success)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, self.sessionToken == token else { return }
-            self.panel.orderOut(nil)
+            self.fadeOut()
         }
     }
 
     func hide() {
         sessionToken += 1
-        panel.orderOut(nil)
+        fadeOut()
     }
 
-    private func present(_ view: HUDView) {
-        let hosting = NSHostingView(rootView: view)
+    private func fadeOut() {
+        guard panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            self?.panel.orderOut(nil)
+        })
+    }
+
+    private func present(text: String, style: HUDView.Style) {
+        model.text = text
+        model.style = style
+        model.light = UserDefaults.standard.bool(forKey: "lightTheme")
+        let hosting = NSHostingView(rootView: HUDView(model: model))
         panel.contentView = hosting
         let size = hosting.fittingSize
         panel.setContentSize(size)
@@ -86,21 +103,26 @@ final class HUD {
             origin.y = min(max(origin.y, frame.minY + 8), frame.maxY - size.height - 8)
         }
         panel.setFrameOrigin(origin)
+        // 淡入登场（120ms），不再瞬间蹦出
+        panel.alphaValue = 0
         panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
     }
 }
 
 struct HUDView: View {
     enum Style { case working, success }
 
-    let text: String
-    let style: Style
-    /// 视图在每次 present 时重建，取一次当前主题即可
-    private let light = UserDefaults.standard.bool(forKey: "lightTheme")
+    @ObservedObject var model: HUDModel
 
     var body: some View {
+        let light = model.light
         HStack(spacing: 8) {
-            switch style {
+            switch model.style {
             case .working:
                 ProgressView()
                     .controlSize(.small)
@@ -109,9 +131,14 @@ struct HUDView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
             }
-            Text(text)
+            // 尾部截断 + 单行：实时字幕始终显示最新内容，宽度恒定不跳
+            Text(model.text)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(light ? Color.black.opacity(0.85) : .white)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(minWidth: 60, maxWidth: 300, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
