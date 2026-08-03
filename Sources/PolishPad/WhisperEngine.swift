@@ -158,13 +158,44 @@ final class WhisperModelStore: NSObject, ObservableObject, URLSessionDownloadDel
 }
 
 /// whisper.cpp 上下文包装：加载/释放 + 单段转写。
-/// ctx 非线程安全——所有调用都在调用方的串行队列上执行
-final class WhisperTranscriber {
-    private var ctx: OpaquePointer?
+/// 内部 NSLock 串行化——共享实例可被面板与按住说话两条管线安全复用
+final class WhisperTranscriber: @unchecked Sendable {
+    /// 常驻共享实例：跨听写会话保留已加载模型（按住说话每次按键才不用
+    /// 重新读 874MB）；空闲 5 分钟自动释放约 1GB 内存
+    static let shared = WhisperTranscriber(idleUnloadSeconds: 300)
 
-    var isLoaded: Bool { ctx != nil }
+    private var ctx: OpaquePointer?
+    private let lock = NSLock()
+    private var lastUsed = Date.distantPast
+    private var idleTimer: DispatchSourceTimer?
+
+    init(idleUnloadSeconds: TimeInterval? = nil) {
+        guard let idle = idleUnloadSeconds else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 60, repeating: 60)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+            if self.ctx != nil, Date().timeIntervalSince(self.lastUsed) > idle {
+                whisper_free(self.ctx)
+                self.ctx = nil
+            }
+        }
+        timer.resume()
+        idleTimer = timer
+    }
+
+    var isLoaded: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ctx != nil
+    }
 
     func load(modelPath: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        lastUsed = Date()
         guard ctx == nil else { return true }
         var params = whisper_context_default_params()
         params.use_gpu = true
@@ -173,12 +204,17 @@ final class WhisperTranscriber {
     }
 
     func unload() {
+        lock.lock()
+        defer { lock.unlock() }
         if let ctx { whisper_free(ctx) }
         ctx = nil
     }
 
-    /// samples: 16kHz 单声道 Float32
+    /// samples: 16kHz 单声道 Float32（内部持锁，与加载/卸载互斥）
     func transcribe(samples: [Float], language: String, prompt: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        lastUsed = Date()
         guard let ctx, !samples.isEmpty else { return nil }
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.n_threads = Int32(max(4, ProcessInfo.processInfo.activeProcessorCount - 2))

@@ -6,7 +6,7 @@ import whisper
 /// 队列侧管线：VAD 状态机 + 分段解码。所有成员只在同一条串行队列上访问，
 /// 与主线程仅通过 onCommit 回调交互
 private final class WhisperPipeline: @unchecked Sendable {
-    let transcriber = WhisperTranscriber()
+    let transcriber = WhisperTranscriber.shared
     var language = "zh"
     var prompt = ""
     var generation = 0
@@ -78,9 +78,16 @@ private final class WhisperPipeline: @unchecked Sendable {
         preRoll = []
         inSpeech = false
         silentFrames = 0
-        if !transcriber.isLoaded,
-           !transcriber.load(modelPath: WhisperModelStore.modelURL.path) {
-            onLoadError?()
+        // 异步预热：加载不堵本队列——VAD 与云端实时字幕零等待开跑；
+        // 首次解码若预热未完，transcribe 内部持锁自然等待
+        if !transcriber.isLoaded {
+            let transcriber = transcriber
+            let onLoadError = onLoadError
+            DispatchQueue.global(qos: .userInitiated).async {
+                if !transcriber.load(modelPath: WhisperModelStore.modelURL.path) {
+                    onLoadError?()
+                }
+            }
         }
         if vad == nil, WhisperModelStore.vadReady {
             var params = whisper_vad_default_context_params()
@@ -251,7 +258,7 @@ private final class WhisperPipeline: @unchecked Sendable {
         onCommit?(text, uid, gen)
     }
 
-    func unload() { transcriber.unload() }
+    // 模型常驻由 WhisperTranscriber.shared 的空闲计时器管理，不随停释放
 }
 
 /// Whisper 本地听写引擎：AVAudioEngine 采集 → 16k 单声道 →
@@ -638,11 +645,16 @@ final class WhisperRecorder {
         onPartial?(full)
     }
 
-    func stop() {
-        guard isRecording else { return }
+    func stop(completion: (@MainActor () -> Void)? = nil) {
+        guard isRecording else {
+            if let completion { Task { @MainActor in completion() } }
+            return
+        }
         isRecording = false
-        xfyunTail?.stop()
+        // 收尾期讯飞会话保留：终稿还要回来升级快照
+        let endingTail = xfyunTail
         xfyunTail = nil
+        endingTail?.stop()
         tailBox.finish()
         tailTask?.cancel()
         tailTask = nil
@@ -651,9 +663,11 @@ final class WhisperRecorder {
         let gen = generation
         let pipe = pipeline
         queue.async {
-            // 收尾：把最后未满静音阈值的一句也解码出来，然后释放模型（约 1GB 内存）
+            // 收尾：把最后未满静音阈值的一句也解码出来（模型常驻不释放）
             pipe.flush(generation: gen)
-            pipe.unload()
+            if let completion {
+                Task { @MainActor in completion() }
+            }
         }
         onStateChange?(false)
     }

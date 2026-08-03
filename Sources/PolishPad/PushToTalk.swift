@@ -140,19 +140,23 @@ final class PushToTalkController {
         lockTimeout?.cancel()
         state = .processing
         HUD.shared.updateWorking(UILang.t("整理中", "Finalizing"))
-        whisperRecorder?.stop()
         systemRecorder?.stop()
-        let stopAt = Date()
-        processingTask = Task { [weak self] in
-            guard let self else { return }
-            // 等收尾定稿静默（最后一句的 Whisper 解码/讯飞终稿在 stop 后异步到达）
-            while Date().timeIntervalSince(stopAt) < 2.5 {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                if Task.isCancelled { return }
-                let quiet = Date().timeIntervalSince(self.lastLiveUpdate)
-                if Date().timeIntervalSince(stopAt) > 0.5, quiet > 0.7 { break }
+        if let recorder = whisperRecorder {
+            // 精确信号：收尾解码完成即走，只留 0.35s 给讯飞终稿精修
+            recorder.stop { [weak self] in
+                self?.processingTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    if Task.isCancelled { return }
+                    await self?.runPipeline()
+                }
             }
-            await self.runPipeline()
+        } else {
+            // 系统引擎：partial 已实时到位，稍候片刻即可
+            processingTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if Task.isCancelled { return }
+                await self?.runPipeline()
+            }
         }
     }
 
