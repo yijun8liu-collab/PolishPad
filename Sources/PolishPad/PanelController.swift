@@ -55,10 +55,7 @@ final class PanelController {
             Task { @MainActor in
                 guard let self, !self.positioningProgrammatically,
                       self.panel.isVisible else { return }
-                UserDefaults.standard.set(
-                    Double(self.panel.frame.origin.x), forKey: "panelOriginX")
-                UserDefaults.standard.set(
-                    Double(self.panel.frame.origin.y), forKey: "panelOriginY")
+                self.storeRelativeOrigin()
             }
         }
         // ⋯ 菜单「恢复默认位置」
@@ -68,9 +65,11 @@ final class PanelController {
             Task { @MainActor in
                 UserDefaults.standard.removeObject(forKey: "panelOriginX")
                 UserDefaults.standard.removeObject(forKey: "panelOriginY")
+                UserDefaults.standard.removeObject(forKey: "panelRelX")
+                UserDefaults.standard.removeObject(forKey: "panelRelY")
                 guard let self, self.panel.isVisible else { return }
                 self.positioningProgrammatically = true
-                self.positionAtDefault()
+                self.positionAtDefault(on: self.activeScreen())
                 self.positioningProgrammatically = false
             }
         }
@@ -173,10 +172,11 @@ final class PanelController {
         panel.setContentSize(PanelSize.current)
         panel.layoutIfNeeded()
         positioningProgrammatically = true
-        if let origin = savedPanelOrigin() {
-            panel.setFrameOrigin(origin) // 用户上次拖到的位置
+        let screen = activeScreen()
+        if let origin = savedRelativeOrigin(on: screen) {
+            panel.setFrameOrigin(origin) // 用户习惯的相对位置，应用到当前工作屏
         } else {
-            positionAtDefault()
+            positionAtDefault(on: screen)
         }
         positioningProgrammatically = false
 
@@ -239,24 +239,98 @@ final class PanelController {
         }
     }
 
-    /// 记忆位置（仍在某个屏幕可见范围内才使用）
-    private func savedPanelOrigin() -> NSPoint? {
-        guard UserDefaults.standard.object(forKey: "panelOriginX") != nil else { return nil }
-        let origin = NSPoint(
-            x: UserDefaults.standard.double(forKey: "panelOriginX"),
-            y: UserDefaults.standard.double(forKey: "panelOriginY"))
-        let rect = NSRect(origin: origin, size: panel.frame.size)
-        guard NSScreen.screens.contains(where: { $0.visibleFrame.intersects(rect) }) else {
-            return nil // 显示器布局变了：回默认位置
+    /// 当前"工作屏"：前台应用焦点窗口所在屏（打字/粘贴发生地）优先，
+    /// 取不到退回鼠标所在屏，再退回主屏
+    private func activeScreen() -> NSScreen? {
+        if let app = previousApp ?? NSWorkspace.shared.frontmostApplication {
+            let appEl = AXUIElementCreateApplication(app.processIdentifier)
+            var winRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute as CFString,
+                                             &winRef) == .success,
+               let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() {
+                var posRef: CFTypeRef?
+                var sizeRef: CFTypeRef?
+                var pos = CGPoint.zero
+                var size = CGSize.zero
+                let winEl = win as! AXUIElement
+                if AXUIElementCopyAttributeValue(winEl, kAXPositionAttribute as CFString,
+                                                 &posRef) == .success,
+                   AXUIElementCopyAttributeValue(winEl, kAXSizeAttribute as CFString,
+                                                 &sizeRef) == .success,
+                   let p = posRef, let s2 = sizeRef,
+                   CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s2) == AXValueGetTypeID() {
+                    AXValueGetValue(p as! AXValue, .cgPoint, &pos)
+                    AXValueGetValue(s2 as! AXValue, .cgSize, &size)
+                    // AX 坐标系：原点在主屏左上、y 向下；AppKit：原点在主屏
+                    // 左下、y 向上。用主屏高度换算（副屏坐标随主屏基准平移）
+                    let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+                    let center = NSPoint(x: pos.x + size.width / 2,
+                                         y: primaryHeight - (pos.y + size.height / 2))
+                    if let screen = NSScreen.screens.first(where: {
+                        NSMouseInRect(center, $0.frame, false)
+                    }) {
+                        return screen
+                    }
+                }
+            }
         }
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+    }
+
+    /// 拖动后记忆：面板中心在所在屏 visibleFrame 内的相对比例——
+    /// 同一个"位置感"适用于任何尺寸的屏幕
+    private func storeRelativeOrigin() {
+        let frame = panel.frame
+        guard let screen = NSScreen.screens.first(where: {
+            $0.visibleFrame.intersects(frame)
+        }) else { return }
+        let visible = screen.visibleFrame
+        let relX = (frame.midX - visible.minX) / visible.width
+        let relY = (frame.midY - visible.minY) / visible.height
+        UserDefaults.standard.set(Double(relX), forKey: "panelRelX")
+        UserDefaults.standard.set(Double(relY), forKey: "panelRelY")
+        // 老的绝对坐标记忆退役
+        UserDefaults.standard.removeObject(forKey: "panelOriginX")
+        UserDefaults.standard.removeObject(forKey: "panelOriginY")
+    }
+
+    /// 相对位置记忆套用到指定屏幕（含出界夹紧）；兼容迁移旧绝对坐标
+    private func savedRelativeOrigin(on screen: NSScreen?) -> NSPoint? {
+        guard let screen else { return nil }
+        let defaults = UserDefaults.standard
+        // 一次性迁移：旧绝对坐标 → 换算相对值
+        if defaults.object(forKey: "panelRelX") == nil,
+           defaults.object(forKey: "panelOriginX") != nil {
+            let old = NSRect(x: defaults.double(forKey: "panelOriginX"),
+                             y: defaults.double(forKey: "panelOriginY"),
+                             width: panel.frame.width, height: panel.frame.height)
+            if let oldScreen = NSScreen.screens.first(where: {
+                $0.visibleFrame.intersects(old)
+            }) {
+                let v = oldScreen.visibleFrame
+                defaults.set(Double((old.midX - v.minX) / v.width), forKey: "panelRelX")
+                defaults.set(Double((old.midY - v.minY) / v.height), forKey: "panelRelY")
+            }
+            defaults.removeObject(forKey: "panelOriginX")
+            defaults.removeObject(forKey: "panelOriginY")
+        }
+        guard defaults.object(forKey: "panelRelX") != nil else { return nil }
+        let visible = screen.visibleFrame
+        let size = panel.frame.size
+        var origin = NSPoint(
+            x: visible.minX + visible.width * defaults.double(forKey: "panelRelX")
+                - size.width / 2,
+            y: visible.minY + visible.height * defaults.double(forKey: "panelRelY")
+                - size.height / 2)
+        origin.x = min(max(origin.x, visible.minX + 4), visible.maxX - size.width - 4)
+        origin.y = min(max(origin.y, visible.minY + 4), visible.maxY - size.height - 4)
         return origin
     }
 
-    /// 默认位置：鼠标所在屏幕，类 Spotlight（水平居中，偏上）
-    private func positionAtDefault() {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
-            ?? NSScreen.main
+    /// 默认位置：指定屏幕上类 Spotlight（水平居中，偏上）
+    private func positionAtDefault(on screen: NSScreen?) {
         guard let screen else { return }
         let frame = screen.visibleFrame
         let size = panel.frame.size
