@@ -459,20 +459,25 @@ final class SessionModel: ObservableObject {
     nonisolated static func asrCorrectionBlock(english: Bool) -> String {
         if english {
             return "\n\nSpeech-input correction: the draft may come from speech "
-                + "recognition and can contain homophone mis-transcriptions — "
-                + "especially technical terms rendered as nonsensical phonetic "
-                + "Chinese (e.g. \u{201C}白塞子\u{201D} should be \u{201C}batch size\u{201D}, "
-                + "\u{201C}书路\u{201D} should be \u{201C}输入\u{201D}, \u{201C}兰特西\u{201D} should be "
-                + "\u{201C}latency\u{201D}). When a word is clearly implausible in context, "
-                + "first restore the most likely intended term by pronunciation "
-                + "(prefer English technical terms in technical contexts), then "
-                + "rewrite. Only fix clear mis-hearings; keep uncertain words as-is."
+                + "recognition and can contain homophone mis-transcriptions. Fix "
+                + "both kinds, always judging by context: (1) technical terms "
+                + "rendered as nonsensical phonetic Chinese (e.g. \u{201C}白塞子\u{201D} should "
+                + "be \u{201C}batch size\u{201D}, \u{201C}兰特西\u{201D} should be \u{201C}latency\u{201D} — prefer "
+                + "English technical terms in technical contexts); (2) Chinese "
+                + "same-sound wrong words (e.g. \u{201C}手艺\u{201D} or \u{201C}收银\u{201D} written where "
+                + "\u{201C}收益\u{201D} was meant): decide strictly from surrounding context — "
+                + "in revenue/ads/investment talk restore \u{201C}收益\u{201D}, but if the text "
+                + "genuinely discusses craftsmanship or a cashier, keep the original. "
+                + "Only fix words clearly implausible in context; keep uncertain ones as-is."
         }
-        return "\n\n语音输入纠错：草稿可能来自语音识别，会有同音/近音误识——"
-            + "尤其技术词常被写成不合常理的音译汉字（如「白塞子」应为 batch size、"
-            + "「书路」应为「输入」、「兰特西」应为 latency）。凡在语境中明显不合常理的词，"
-            + "先按发音还原成最可能的本意（技术语境优先还原为英文术语），再进行改写。"
-            + "只纠正明显误识，不确定的保留原词。"
+        return "\n\n语音输入纠错：草稿可能来自语音识别，存在同音/近音误写，两类都要纠，"
+            + "且必须联系上下文判断：\n"
+            + "1) 技术词被写成不合常理的音译汉字（如「白塞子」应为 batch size、"
+            + "「兰特西」应为 latency）——技术语境优先还原为英文术语；\n"
+            + "2) 中文同音别字（如把「收益」误写成「手艺」或「收银」）——"
+            + "严格根据上下文判断词义是否通顺：谈业绩/广告/投资时「手艺」「收银」"
+            + "多半应为「收益」；但语境真在谈手工技艺或收银台时必须保留原词。\n"
+            + "只纠正语境中明显不通的词，不确定的保留原样。"
     }
 
     /// 语气调音台注入：仅在偏离中性时附加（50±2 视作默认）
