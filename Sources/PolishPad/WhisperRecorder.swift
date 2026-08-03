@@ -309,6 +309,9 @@ final class WhisperRecorder {
     private var tailTask: SFSpeechRecognitionTask?
     private var tailCommitted = ""
     private var tailPartial = ""
+    /// 讯飞模式下的系统识别"桥"：讯飞首字要 1-2.5s，这 0.3s 就出字的
+    /// 本地字幕先顶住，讯飞一出字即接管；短句讯飞没来得及出字时兜底快照
+    private var bridgePartial = ""
     private var tailActive = false
     /// 尾巴段代次：老任务被取消后的迟到回调直接丢弃，防止定稿后旧句复活
     private var tailGen = 0
@@ -370,11 +373,14 @@ final class WhisperRecorder {
             Task { @MainActor in
                 guard let self, g == self.generation,
                       self.tailActive || self.xfyunTail != nil else { return }
-                let snap = self.joinTail(self.tailCommitted, self.tailPartial)
-                Self.flog("SNAP#\(uid) \(snap.prefix(24))")
+                let xfText = self.joinTail(self.tailCommitted, self.tailPartial)
+                let snap = xfText.isEmpty ? self.bridgePartial : xfText
+                Self.flog("SNAP#\(uid) \(snap.prefix(24))\(xfText.isEmpty ? "(桥)" : "")")
                 self.pendingSnaps.append((uid, snap))
                 self.tailCommitted = ""
                 self.tailPartial = ""
+                self.bridgePartial = ""
+                if self.xfyunTail != nil, self.tailActive { self.startTailSegment() }
                 if let tail = self.xfyunTail {
                     // 终稿到达：这句还没定稿 → 升级快照；已定稿 → 按规则追溯替换
                     self.pendingXfyunFinals += 1
@@ -437,6 +443,7 @@ final class WhisperRecorder {
         // 融合模式装配：系统识别可用则由它负责实时尾巴，关闭滑动窗口预览
         tailCommitted = ""
         tailPartial = ""
+        bridgePartial = ""
         pendingSnaps = []
         tailRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
         tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
@@ -512,7 +519,7 @@ final class WhisperRecorder {
         }
         isRecording = true
         onStateChange?(true)
-        if tailActive, xfyunTail == nil { startTailSegment() }
+        if tailActive { startTailSegment() }
     }
 
     /// 开一段系统识别（每次 Whisper 定稿后重开，让尾巴只覆盖"未定稿"部分）
@@ -538,6 +545,17 @@ final class WhisperRecorder {
 
     private func handleTail(result: SFSpeechRecognitionResult?, error: Error?, gen: Int) {
         guard isRecording, tailActive, gen == tailGen else { return }
+        if xfyunTail != nil {
+            // 桥模式：只维护当前段的临时文本，讯飞出字后 emit 自动让位
+            if let result {
+                bridgePartial = result.bestTranscription.formattedString
+                if result.isFinal { startTailSegment() }
+                emit()
+            } else if error != nil {
+                startTailSegment()
+            }
+            return
+        }
         if let result {
             let text = result.bestTranscription.formattedString
             if result.isFinal {
@@ -643,7 +661,8 @@ final class WhisperRecorder {
     private func emit() {
         let separator = language == "zh" ? "" : " "
         let hasTail = tailActive || xfyunTail != nil
-        let live = hasTail ? joinTail(tailCommitted, tailPartial) : interim
+        var live = hasTail ? joinTail(tailCommitted, tailPartial) : interim
+        if xfyunTail != nil, live.isEmpty { live = bridgePartial }
         var parts = [committed]
         parts.append(contentsOf: pendingSnaps.sorted { $0.id < $1.id }.map(\.text))
         if !live.isEmpty { parts.append(live) }
