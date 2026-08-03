@@ -26,10 +26,10 @@ final class TimeThrottle: @unchecked Sendable {
 final class PushToTalkController {
     /// 可选热键：单个右侧修饰键（左手打字右手够得着，且不与输入法冲突）
     static let keyOptions: [(key: String, code: CGKeyCode, flag: NSEvent.ModifierFlags,
-                             zh: String, en: String)] = [
-        ("right_cmd", 54, .command, "右 Command", "Right Command"),
-        ("right_shift", 60, .shift, "右 Shift", "Right Shift"),
-        ("right_ctrl", 62, .control, "右 Control", "Right Control"),
+                             zh: String, en: String, symbol: String)] = [
+        ("right_cmd", 54, .command, "右 Command", "Right Command", "右 ⌘"),
+        ("right_shift", 60, .shift, "右 Shift", "Right Shift", "右 ⇧"),
+        ("right_ctrl", 62, .control, "右 Control", "Right Control", "右 ⌃"),
     ]
 
     private enum State {
@@ -76,7 +76,8 @@ final class PushToTalkController {
     }
 
     private func handleFlags(_ event: NSEvent, option: (key: String, code: CGKeyCode,
-                             flag: NSEvent.ModifierFlags, zh: String, en: String)) {
+                             flag: NSEvent.ModifierFlags, zh: String, en: String,
+                             symbol: String)) {
         guard event.keyCode == option.code else { return }
         let isDown = event.modifierFlags.contains(option.flag)
         switch (state, isDown) {
@@ -88,7 +89,9 @@ final class PushToTalkController {
             if Date().timeIntervalSince(downAt) < 0.35 {
                 // 短按 → 锁定录音
                 state = .locked
-                HUD.shared.updateWorking(UILang.t("再按结束", "Tap again to finish"))
+                HUD.shared.updateWorking(UILang.t(
+                    "说话中… 结束请再按\(option.symbol)",
+                    "Speaking… press \(option.symbol) again to finish"))
                 armLockTimeout()
             } else {
                 finishRecording()   // 对讲：松开结束
