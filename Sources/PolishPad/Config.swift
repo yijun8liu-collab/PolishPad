@@ -116,6 +116,8 @@ struct AppConfig: Codable {
     /// 实时字幕引擎（Whisper 融合模式的实时层）："system"（默认）或
     /// "xfyun"（讯飞云端：大模型 → 经典版 → 系统 三级自动降级）
     var realtimeEngine: String? = nil
+    /// 按住说话热键（nil=关闭）："right_cmd" / "right_shift" / "right_ctrl"
+    var pttKey: String? = nil
     var xfyunAppId: String? = nil
     var xfyunApiKey: String? = nil
     var xfyunApiSecret: String? = nil

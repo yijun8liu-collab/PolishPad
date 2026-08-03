@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var historyMenuItem: NSMenuItem?
     private var panelController: PanelController!
     private var quickPolish: QuickPolishController!
+    private var pushToTalk: PushToTalkController!
     private var serviceProvider: ServiceProvider!
     private var hotKeys: [GlobalHotKey] = []
     private var panelHotkeySpec = "ctrl+option+p"
@@ -111,6 +112,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupQuickPolish() {
+        pushToTalk = PushToTalkController()
+        pushToTalk.isPanelVisible = { [weak self] in
+            self?.panelController.isVisible ?? false
+        }
+        pushToTalk.rearm()
+        NotificationCenter.default.addObserver(
+            forName: .polishPadSettingsSaved, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.pushToTalk.rearm() }
+        }
         quickPolish = QuickPolishController()
         quickPolish.onStateChange = { [weak self] state in
             switch state {

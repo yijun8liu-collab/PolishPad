@@ -30,6 +30,7 @@ struct SettingsView: View {
     @State private var autoStartDictation = false
     @State private var useWhisper = false
     @State private var realtimeEngine = "system"
+    @State private var pttKey = "off"
     @State private var xfyunAppId = ""
     @State private var xfyunApiKey = ""
     @State private var xfyunApiSecret = ""
@@ -182,6 +183,19 @@ struct SettingsView: View {
                             if enabled { WhisperModelStore.shared.startDownloadIfNeeded() }
                         }
                     whisperStatusRow
+                    Picker(UILang.t("按住说话", "Push to talk"), selection: $pttKey) {
+                        Text(UILang.t("关闭", "Off")).tag("off")
+                        Text(UILang.t("右 Command", "Right Command")).tag("right_cmd")
+                        Text(UILang.t("右 Shift", "Right Shift")).tag("right_shift")
+                        Text(UILang.t("右 Control", "Right Control")).tag("right_ctrl")
+                    }
+                    if pttKey != "off" {
+                        Text(UILang.t(
+                            "不开面板的语音直达：按住该键说话、松开即按当前场景优化并粘贴到光标处；短按一下进入锁定录音（说完再按一次结束，Esc 取消）。原文自动存入历史。",
+                            "Panel-less voice: hold to talk and release to refine & paste at the cursor; a quick tap locks recording (tap again to finish, Esc cancels). Originals are kept in History."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Picker(UILang.t("实时字幕引擎", "Live caption engine"),
                            selection: $realtimeEngine) {
                         Text(UILang.t("系统识别", "System")).tag("system")
@@ -567,6 +581,7 @@ struct SettingsView: View {
         autoStartDictation = config.autoStartDictation ?? false
         useWhisper = config.speechEngine == "whisper"
         realtimeEngine = config.realtimeEngine ?? "system"
+        pttKey = config.pttKey ?? "off"
         xfyunAppId = config.xfyunAppId ?? ""
         xfyunApiKey = config.xfyunApiKey ?? ""
         xfyunApiSecret = config.xfyunApiSecret ?? ""
@@ -629,6 +644,7 @@ struct SettingsView: View {
             autoStartDictation: autoStartDictation,
             speechEngine: useWhisper ? "whisper" : nil,
             realtimeEngine: realtimeEngine == "system" ? nil : realtimeEngine,
+            pttKey: pttKey == "off" ? nil : pttKey,
             xfyunAppId: xfyunAppId.isEmpty ? nil : xfyunAppId.trimmingCharacters(in: .whitespaces),
             xfyunApiKey: xfyunApiKey.isEmpty ? nil : xfyunApiKey.trimmingCharacters(in: .whitespaces),
             xfyunApiSecret: xfyunApiSecret.isEmpty ? nil : xfyunApiSecret.trimmingCharacters(in: .whitespaces),
