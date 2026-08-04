@@ -8,6 +8,12 @@
 
 A macOS menu bar utility: summon a floating glass panel with a global hotkey, type (or dictate) your rambling thoughts, press Enter — AI rewrites them into clear, well-organized text and **pastes the result straight back into the app you came from**. Refine through multi-round conversation, watch your draft *transmute character-by-character* into the polished version, and switch scenarios (polish / Slack English / formal / concise / your own) on the fly.
 
+## 首次安装
+
+1. 从 [Releases](https://github.com/yijun8liu-collab/PolishPad/releases/latest) 下载最新 zip 并解压；
+2. **把 PolishPad.app 拖进「应用程序」文件夹**（直接在下载目录里运行会禁用一键自更新，app 也会主动提醒你搬家）；
+3. 首次打开时 macOS 会提示"无法验证开发者"：**右键 app → 打开 → 打开**（或 系统设置 → 隐私与安全性 → 仍要打开）。这是因为 app 未经 Apple 公证，只需处理这一次——之后的版本升级走应用内一键更新，不会再遇到。
+
 ## Install (download)
 
 1. Download the latest `PolishPad-x.y.z.zip` from [Releases](https://github.com/yijun8liu-collab/PolishPad/releases), unzip, and drag `PolishPad.app` into Applications

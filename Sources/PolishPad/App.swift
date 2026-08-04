@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ConfigStore.migrateLegacyCustomPreset()
         maybeShowOnboarding()
         checkForUpdatesSilently()
+        AppInstaller.offerMoveToApplicationsIfNeeded()
         // 隐藏测试钩子：端到端验证一键更新管线
         if let idx = CommandLine.arguments.firstIndex(of: "--test-xfyun"),
            idx + 1 < CommandLine.arguments.count {
@@ -206,7 +207,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ) { stage in HUD.shared.showWorking(stage) }
             } catch {
                 HUD.shared.hide()
-                if let page = URL(string: update.pageURL) {
+                // 不再静默跳浏览器：先把原因讲清楚，再给出路
+                let alert = NSAlert()
+                alert.messageText = UILang.t("一键升级未能完成", "One-click update failed")
+                alert.informativeText = error.localizedDescription + "\n\n"
+                    + UILang.t("可以打开发布页手动下载新版本。",
+                               "You can download the new version from the releases page.")
+                alert.addButton(withTitle: UILang.t("打开发布页", "Open Releases"))
+                alert.addButton(withTitle: UILang.t("取消", "Cancel"))
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertFirstButtonReturn,
+                   let page = URL(string: update.pageURL) {
                     NSWorkspace.shared.open(page)
                 }
             }
