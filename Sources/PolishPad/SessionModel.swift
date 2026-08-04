@@ -210,18 +210,38 @@ final class SessionModel: ObservableObject {
         dictationBase = phase == .composing ? draft : feedback
         let config = ConfigStore.loadRaw()
         let localeId = config?.speechLocale ?? "zh-CN"
-        // Whisper 引擎：配置开启且模型就绪；未就绪静默回退系统引擎并提示
-        if config?.speechEngine == "whisper" {
-            if WhisperModelStore.isReady {
-                dictationEngine = .whisper
-                whisperSpeech.start(localeId: localeId)
-                return
-            }
+        // 融合模式条件：配置了云端实时引擎（凭证齐）或定稿引擎（模型就绪）。
+        // 两者皆无 → 纯系统识别
+        let finalizeReady = config?.effectiveFinalizeEngine == "whisper"
+            && WhisperModelStore.isReady
+        let cloudReady = Self.cloudRealtimeConfigured(config)
+        if finalizeReady || cloudReady {
+            dictationEngine = .whisper
+            whisperSpeech.start(localeId: localeId)
+            return
+        }
+        if config?.effectiveFinalizeEngine == "whisper" {
             statusText = t("Whisper 模型未就绪，本次使用系统识别",
                            "Whisper model not ready — using system engine")
         }
         dictationEngine = .system
         speech.start(localeId: localeId)
+    }
+
+    /// 云端实时引擎是否配置齐全（讯飞/腾讯凭证三件套）
+    nonisolated static func cloudRealtimeConfigured(_ config: AppConfig?) -> Bool {
+        switch config?.realtimeEngine {
+        case "xfyun":
+            return !(config?.xfyunAppId ?? "").isEmpty
+                && !(config?.xfyunApiKey ?? "").isEmpty
+                && !(config?.xfyunApiSecret ?? "").isEmpty
+        case "tencent":
+            return !(config?.tencentAppId ?? "").isEmpty
+                && !(config?.tencentSecretId ?? "").isEmpty
+                && !(config?.tencentSecretKey ?? "").isEmpty
+        default:
+            return false
+        }
     }
 
     func stopDictation() {

@@ -150,7 +150,9 @@ final class PushToTalkController {
         let applyLevel: (Float) -> Void = { level in
             HUD.shared.updateLevel(level)
         }
-        if config?.speechEngine == "whisper", WhisperModelStore.isReady {
+        let finalizeReady = config?.effectiveFinalizeEngine == "whisper"
+            && WhisperModelStore.isReady
+        if finalizeReady || SessionModel.cloudRealtimeConfigured(config) {
             let r = WhisperRecorder()
             r.onPartial = applyLive
             r.onError = onError

@@ -111,8 +111,16 @@ struct AppConfig: Codable {
     var idlePrefetch: Bool? = nil
     /// 打开面板时自动开启语音输入（默认关）
     var autoStartDictation: Bool? = nil
-    /// 语音识别引擎："system"（默认）或 "whisper"（本地大模型，中英混合更准）
+    /// （旧字段，保留做迁移）语音识别引擎："system" 或 "whisper"
     var speechEngine: String? = nil
+    /// 定稿引擎："none"（默认）或 "whisper"——句子停顿后用本地 Whisper
+    /// 复核；实时引擎质量足够时按惰性策略跳过解码
+    var finalizeEngine: String? = nil
+
+    /// 迁移语义：新字段优先，旧的 speechEngine=whisper 视作已开定稿
+    var effectiveFinalizeEngine: String {
+        finalizeEngine ?? (speechEngine == "whisper" ? "whisper" : "none")
+    }
     /// 实时字幕引擎（Whisper 融合模式的实时层）："system"（默认）或
     /// "xfyun"（讯飞云端：大模型 → 经典版 → 系统 三级自动降级）
     var realtimeEngine: String? = nil

@@ -28,7 +28,7 @@ struct SettingsView: View {
     @State private var autoPaste = true
     @State private var idlePrefetch = true
     @State private var autoStartDictation = false
-    @State private var useWhisper = false
+    @State private var finalizeEngine = "none"
     @State private var realtimeEngine = "system"
     @State private var pttKey = "off"
     @State private var xfyunAppId = ""
@@ -173,19 +173,29 @@ struct SettingsView: View {
                     Toggle(UILang.t("停顿预取（回车秒出）", "Idle prefetch (instant Enter)"),
                            isOn: $idlePrefetch)
                     Text(UILang.t(
-                        "输入停顿 2 秒后在后台预先优化一轮；回车时内容未再改动即瞬间出结果（状态栏显示闪电标记）。注意：预取会产生额外的 API 调用，每次有效停顿约多消耗一轮 token。",
-                        "After a 2s typing pause, a round is pre-run in the background; press Enter without further edits and the result appears instantly (bolt icon in the status bar). Note: prefetching makes extra API calls — roughly one additional round of tokens per pause."))
+                        "输入停顿时预先优化，回车秒出；有额外 token 消耗。",
+                        "Pre-refines during typing pauses for instant Enter; uses extra tokens."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Toggle(UILang.t("打开面板自动开启语音输入", "Start dictation when the panel opens"),
                            isOn: $autoStartDictation)
-                    Toggle(UILang.t("Whisper 大模型语音识别（本地）",
-                                    "Whisper large-model dictation (local)"),
-                           isOn: $useWhisper)
-                        .onChange(of: useWhisper) { enabled in
-                            if enabled { WhisperModelStore.shared.startDownloadIfNeeded() }
+                    Picker(UILang.t("定稿引擎", "Finalize engine"),
+                           selection: $finalizeEngine) {
+                        Text(UILang.t("无", "None")).tag("none")
+                        Text("Whisper").tag("whisper")
+                    }
+                    .onChange(of: finalizeEngine) { value in
+                        if value == "whisper" {
+                            WhisperModelStore.shared.startDownloadIfNeeded()
                         }
-                    whisperStatusRow
+                    }
+                    if finalizeEngine == "whisper" {
+                        whisperStatusRow
+                        Text(UILang.t("停顿后用本地大模型复核听写；首次开启下载约 874MB。",
+                                      "Local model double-checks dictation; ~874MB download on first enable."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Picker(UILang.t("按住说话", "Push to talk"), selection: $pttKey) {
                         Text(UILang.t("关闭", "Off")).tag("off")
                         Text(UILang.t("右 Command", "Right Command")).tag("right_cmd")
@@ -194,8 +204,8 @@ struct SettingsView: View {
                     }
                     if pttKey != "off" {
                         Text(UILang.t(
-                            "不开面板的语音直达：按住该键说话、松开即按当前场景优化并粘贴到光标处；短按一下进入锁定录音（说完再按一次结束，Esc 取消）。原文自动存入历史。",
-                            "Panel-less voice: hold to talk and release to refine & paste at the cursor; a quick tap locks recording (tap again to finish, Esc cancels). Originals are kept in History."))
+                            "按住说话，松开即优化并粘贴；短按可锁定录音，Esc 取消。",
+                            "Hold to talk, release to refine & paste; tap to lock recording, Esc cancels."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -215,8 +225,8 @@ struct SettingsView: View {
                         SecureField("SecretKey", text: $tencentSecretKey)
                             .textFieldStyle(.roundedBorder)
                         Text(UILang.t(
-                            "在腾讯云控制台开通「实时语音识别」并在 API 密钥管理创建密钥；公司/代理网络出口在境外时还需开启「跨境流量后付费」。听写时语音发送至腾讯云；实测大模型档（16k_zh_large）术语还原最强，故定稿以实时文本为准、Whisper 仅兜底。",
-                            "Enable Realtime ASR in the Tencent Cloud console and create a key in CAM. If your network egress is overseas, also enable cross-border pay-as-you-go. Audio is sent to Tencent Cloud; the large model tested strongest, so live text is authoritative and Whisper only backfills."))
+                            "凭证来自腾讯云控制台；语音经腾讯云识别。境外网络出口需另开「跨境流量后付费」。",
+                            "Credentials from the Tencent Cloud console; audio is processed by Tencent Cloud."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -228,19 +238,13 @@ struct SettingsView: View {
                         SecureField("APISecret", text: $xfyunApiSecret)
                             .textFieldStyle(.roundedBorder)
                         Text(UILang.t(
-                            "在讯飞开放平台（xfyun.cn）创建应用并开通「中文识别大模型」与「语音听写」。听写时语音将发送至讯飞云端；额度不足自动降级经典版，仍失败回退系统识别。仅在 Whisper 引擎开启时生效。",
-                            "Create an app at xfyun.cn and enable the big-model + classic dictation services. Audio is sent to iFlytek cloud while dictating; falls back to the classic API on quota issues, then to the system engine. Takes effect only with the Whisper engine on."))
+                            "凭证来自讯飞开放平台（xfyun.cn）；语音经讯飞云端识别。",
+                            "Credentials from xfyun.cn; audio is processed by iFlytek cloud."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    Text(UILang.t(
-                        "中英混合识别显著更准（large-v3-turbo，全程本地运行）。说完一句停顿约 1 秒整句出现，不逐字出字。首次开启需下载约 874MB 模型；Apple Silicon 体验最佳。",
-                        "Much better mixed Chinese-English accuracy (large-v3-turbo, fully local). Text appears sentence-by-sentence after a ~1s pause instead of word-by-word. First enable downloads a ~874MB model; best on Apple Silicon."))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(UILang.t(
-                        "开启后每次唤起面板即进入听写（等同点击麦克风），说完直接回车。识别语言跟随上方的语音识别语言设置。",
-                        "When on, summoning the panel immediately starts dictation (same as tapping the mic) — speak, then press Enter. Recognition language follows the speech locale above."))
+                    Text(UILang.t("唤起面板即自动开始听写。",
+                                  "Dictation starts as soon as the panel opens."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Picker(UILang.t("面板大小", "Panel size"), selection: $panelSizeChoice) {
@@ -521,7 +525,7 @@ struct SettingsView: View {
     private var whisperStatusRow: some View {
         switch whisperStore.state {
         case .missing:
-            if useWhisper {
+            if finalizeEngine == "whisper" {
                 HStack(spacing: 8) {
                     Text(UILang.t("模型未下载", "Model not downloaded"))
                         .font(.caption).foregroundColor(.secondary)
@@ -543,7 +547,7 @@ struct SettingsView: View {
                 .controlSize(.small)
             }
         case .ready:
-            if useWhisper {
+            if finalizeEngine == "whisper" {
                 Label(UILang.t("模型已就绪", "Model ready"), systemImage: "checkmark.circle")
                     .font(.caption).foregroundColor(.secondary)
             }
@@ -597,7 +601,7 @@ struct SettingsView: View {
         autoPaste = config.autoPaste ?? true
         idlePrefetch = config.idlePrefetch ?? true
         autoStartDictation = config.autoStartDictation ?? false
-        useWhisper = config.speechEngine == "whisper"
+        finalizeEngine = config.effectiveFinalizeEngine
         realtimeEngine = config.realtimeEngine ?? "system"
         pttKey = config.pttKey ?? "off"
         xfyunAppId = config.xfyunAppId ?? ""
@@ -663,7 +667,8 @@ struct SettingsView: View {
             glossary: glossaryLines.isEmpty ? nil : glossaryLines,
             idlePrefetch: idlePrefetch,
             autoStartDictation: autoStartDictation,
-            speechEngine: useWhisper ? "whisper" : nil,
+            speechEngine: nil,
+            finalizeEngine: finalizeEngine,
             realtimeEngine: realtimeEngine == "system" ? nil : realtimeEngine,
             pttKey: pttKey == "off" ? nil : pttKey,
             xfyunAppId: xfyunAppId.isEmpty ? nil : xfyunAppId.trimmingCharacters(in: .whitespaces),

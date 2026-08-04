@@ -18,9 +18,13 @@ private final class WhisperPipeline: @unchecked Sendable {
     var onCommit: ((String, Int, Int) -> Void)?
     /// 说话过程中的滑动窗口预览：当前未完句的临时转写（空串=清除预览）
     var onInterim: ((String, Int) -> Void)?
-    /// 停顿刚被检测到（解码开始前）：(句子编号, 代次)。
-    /// 融合模式在此刻快照实时侧文字并重开实时段
-    var onUtteranceEnd: ((Int, Int) -> Void)?
+    /// 停顿刚被检测到：(句子编号, 代次, 句长秒数)。
+    /// 调用方快照实时侧文字后，用 resolveUtterance 裁决是否需要 Whisper 解码
+    var onUtteranceEnd: ((Int, Int, Double) -> Void)?
+    /// 待裁决的句子音频（惰性 Whisper：不解码就直接丢弃，零算力）
+    private var pendingAudio: [Int: [Float]] = [:]
+    /// 定稿引擎开关：关闭时从不加载/解码 Whisper 模型
+    var finalizeEnabled = true
     /// 句子自增编号：快照与定稿按编号精确配对，杜绝竞态下的重复提交
     private var utteranceId = 0
     /// 人声段实时音频外送（供云端实时引擎逐帧转写）；isStart 含前导音频
@@ -83,9 +87,10 @@ private final class WhisperPipeline: @unchecked Sendable {
         preRoll = []
         inSpeech = false
         silentFrames = 0
+        pendingAudio = [:]
         // 异步预热：加载不堵本队列——VAD 与云端实时字幕零等待开跑；
         // 首次解码若预热未完，transcribe 内部持锁自然等待
-        if !transcriber.isLoaded {
+        if finalizeEnabled, !transcriber.isLoaded {
             let transcriber = transcriber
             let onLoadError = onLoadError
             DispatchQueue.global(qos: .userInitiated).async {
@@ -246,12 +251,32 @@ private final class WhisperPipeline: @unchecked Sendable {
             onInterim?("", gen)   // 清掉可能残留的预览
             return
         }
-        // 先通知"这句说完了"，让调用方立刻快照实时侧文字——
-        // 解码期间用户可能已在说下一句，晚了快照会混入下一句开头
+        // 先通知"这句说完了"并留存音频，由调用方裁决是否需要 Whisper：
+        // 实时引擎质量足够（腾讯大模型）时直接跳过解码，零 GPU 成本
         utteranceId += 1
         let uid = utteranceId
-        onUtteranceEnd?(uid, gen)
-        dlog("DECODE#\(uid) \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
+        pendingAudio[uid] = audio
+        if pendingAudio.count > 4 {
+            // 只保最近几句，防裁决丢失导致的累积
+            pendingAudio.keys.sorted().prefix(pendingAudio.count - 4)
+                .forEach { pendingAudio.removeValue(forKey: $0) }
+        }
+        dlog("END#\(uid) \(String(format: "%.1f", seconds))s rms=\(segRMS) speechWin=\(hadSpeechWindows)")
+        onUtteranceEnd?(uid, gen, seconds)
+    }
+
+    /// 裁决：decode=true 走 Whisper 解码（onCommit/onDropped 回报），
+    /// false 直接丢弃音频（调用方已用实时版定稿）
+    func resolveUtterance(_ uid: Int, decode: Bool, generation gen: Int) {
+        guard let audio = pendingAudio.removeValue(forKey: uid) else {
+            if decode { onUtteranceDropped?(uid, gen) }
+            return
+        }
+        guard decode, finalizeEnabled else {
+            dlog("SKIP-DECODE#\(uid)")
+            return
+        }
+        dlog("DECODE#\(uid)")
         let lang = language
         let promptText = prompt
         decodeQueue.async { [weak self] in
@@ -301,6 +326,15 @@ final class WhisperRecorder {
         let source: Source
     }
     private var committedParts: [CommittedPart] = []
+    /// 本次会话定稿引擎（Whisper）是否可用：配置开启且模型就绪
+    private var finalizeAvailable = false
+
+    private func resolvePipeline(_ uid: Int, decode: Bool) {
+        let gen = generation
+        let pipe = pipeline
+        queue.async { pipe.resolveUtterance(uid, decode: decode, generation: gen) }
+    }
+
     private var committed: String {
         let separator = language == "zh" ? "" : " "
         return committedParts.map(\.text).joined(separator: separator)
@@ -339,10 +373,6 @@ final class WhisperRecorder {
 
     func start(localeId: String) {
         guard !isRecording else { return }
-        guard WhisperModelStore.isReady else {
-            onError?("Whisper 模型未就绪，请到 设置 → 行为 下载")
-            return
-        }
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor in
                 guard let self else { return }
@@ -381,20 +411,46 @@ final class WhisperRecorder {
                 self.emit()
             }
         }
-        pipeline.onUtteranceEnd = { [weak self] uid, g in
+        pipeline.onUtteranceEnd = { [weak self] uid, g, seconds in
             Task { @MainActor in
-                guard let self, g == self.generation,
-                      self.tailActive || self.cloudTail != nil else { return }
+                guard let self, g == self.generation else { return }
+                guard self.tailActive || self.cloudTail != nil else {
+                    // 纯 Whisper 模式（无任何实时层）：一律解码
+                    self.resolvePipeline(uid, decode: true)
+                    return
+                }
                 let xfText = self.joinTail(self.tailCommitted, self.tailPartial)
                 let snap = xfText.isEmpty ? self.bridgePartial : xfText
-                Self.flog("SNAP#\(uid) \(snap.prefix(24))\(xfText.isEmpty ? "(桥)" : "")")
-                self.pendingSnaps.append((uid, snap))
                 self.tailCommitted = ""
                 self.tailPartial = ""
                 self.bridgePartial = ""
                 if self.cloudTail != nil, self.tailActive { self.startTailSegment() }
+
+                // 惰性 Whisper：实时层为主（腾讯）或定稿引擎关闭时，
+                // 实时文本可信（非空且长度与句长匹配）就直接定稿、跳过解码
+                let plausible = !snap.isEmpty && Double(snap.count) >= seconds * 0.8
+                let lazyEligible = self.cloudTail?.prefersRealtimeText == true
+                    || !self.finalizeAvailable
+                if lazyEligible, plausible {
+                    Self.flog("LAZY#\(uid) \(snap.prefix(24))")
+                    self.appendCommitted(snap, id: uid, source: .snapshot)
+                    self.resolvePipeline(uid, decode: false)
+                } else {
+                    Self.flog("SNAP#\(uid) \(snap.prefix(24))\(xfText.isEmpty ? "(桥)" : "")")
+                    self.pendingSnaps.append((uid, snap))
+                    self.resolvePipeline(uid, decode: self.finalizeAvailable)
+                    if !self.finalizeAvailable {
+                        // 无定稿引擎：快照即最终版（终稿升级仍可修）
+                        if let idx = self.pendingSnaps.firstIndex(where: { $0.id == uid }) {
+                            let part = self.pendingSnaps.remove(at: idx)
+                            if !part.text.isEmpty {
+                                self.appendCommitted(part.text, id: uid, source: .snapshot)
+                            }
+                        }
+                    }
+                }
                 if let tail = self.cloudTail {
-                    // 终稿到达：这句还没定稿 → 升级快照；已定稿 → 按规则追溯替换
+                    // 终稿到达：待定句升级快照；已定稿句按规则追溯替换
                     self.pendingXfyunFinals += 1
                     tail.endUtterance { [weak self] final in
                         guard let self else { return }
@@ -413,8 +469,6 @@ final class WhisperRecorder {
                             self.retroReplace(uid, final: final)
                         }
                     }
-                } else {
-                    self.startTailSegment()
                 }
                 self.emit()
             }
@@ -453,7 +507,11 @@ final class WhisperRecorder {
             return
         }
 
+        let cfg0 = ConfigStore.loadRaw()
+        finalizeAvailable = cfg0?.effectiveFinalizeEngine == "whisper"
+            && WhisperModelStore.isReady
         let pipe = pipeline
+        pipe.finalizeEnabled = finalizeAvailable
         let workQueue = queue
         workQueue.async { pipe.reset(language: lang, prompt: prompt, generation: gen) }
 
