@@ -272,7 +272,10 @@ final class XFYunSession: NSObject, URLSessionWebSocketDelegate {
 
 /// 讯飞实时层引擎：按句开会话，三级降级（大模型 → 经典版 → 报不可用回退系统）
 @MainActor
-final class XFYunTailEngine {
+final class XFYunTailEngine: CloudTailEngine {
+    /// 讯飞大模型实测 82% < Whisper 87%：定稿层保持"含英文替换"规则
+    let prefersRealtimeText = false
+
     private static func xlog(_ message: String) {
         let line = "[\(ISO8601DateFormatter().string(from: Date()))] XFYUN \(message)\n"
         let url = URL(fileURLWithPath: "/tmp/polishpad-whisper.log")

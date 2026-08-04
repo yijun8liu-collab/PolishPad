@@ -32,6 +32,9 @@ struct SettingsView: View {
     @State private var realtimeEngine = "system"
     @State private var pttKey = "off"
     @State private var xfyunAppId = ""
+    @State private var tencentAppId = ""
+    @State private var tencentSecretId = ""
+    @State private var tencentSecretKey = ""
     @State private var xfyunApiKey = ""
     @State private var xfyunApiSecret = ""
     @ObservedObject private var whisperStore = WhisperModelStore.shared
@@ -201,6 +204,21 @@ struct SettingsView: View {
                         Text(UILang.t("系统识别", "System")).tag("system")
                         Text(UILang.t("讯飞云端（自动降级）", "iFlytek cloud (auto-fallback)"))
                             .tag("xfyun")
+                        Text(UILang.t("腾讯云端（大模型）", "Tencent cloud (large model)"))
+                            .tag("tencent")
+                    }
+                    if realtimeEngine == "tencent" {
+                        TextField("AppID", text: $tencentAppId)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("SecretId", text: $tencentSecretId)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("SecretKey", text: $tencentSecretKey)
+                            .textFieldStyle(.roundedBorder)
+                        Text(UILang.t(
+                            "在腾讯云控制台开通「实时语音识别」并在 API 密钥管理创建密钥；公司/代理网络出口在境外时还需开启「跨境流量后付费」。听写时语音发送至腾讯云；实测大模型档（16k_zh_large）术语还原最强，故定稿以实时文本为准、Whisper 仅兜底。",
+                            "Enable Realtime ASR in the Tencent Cloud console and create a key in CAM. If your network egress is overseas, also enable cross-border pay-as-you-go. Audio is sent to Tencent Cloud; the large model tested strongest, so live text is authoritative and Whisper only backfills."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     if realtimeEngine == "xfyun" {
                         TextField("APPID", text: $xfyunAppId)
@@ -583,6 +601,9 @@ struct SettingsView: View {
         realtimeEngine = config.realtimeEngine ?? "system"
         pttKey = config.pttKey ?? "off"
         xfyunAppId = config.xfyunAppId ?? ""
+        tencentAppId = config.tencentAppId ?? ""
+        tencentSecretId = config.tencentSecretId ?? ""
+        tencentSecretKey = config.tencentSecretKey ?? ""
         xfyunApiKey = config.xfyunApiKey ?? ""
         xfyunApiSecret = config.xfyunApiSecret ?? ""
         let size = PanelSize.current
@@ -646,6 +667,9 @@ struct SettingsView: View {
             realtimeEngine: realtimeEngine == "system" ? nil : realtimeEngine,
             pttKey: pttKey == "off" ? nil : pttKey,
             xfyunAppId: xfyunAppId.isEmpty ? nil : xfyunAppId.trimmingCharacters(in: .whitespaces),
+            tencentAppId: tencentAppId.isEmpty ? nil : tencentAppId.trimmingCharacters(in: .whitespaces),
+            tencentSecretId: tencentSecretId.isEmpty ? nil : tencentSecretId.trimmingCharacters(in: .whitespaces),
+            tencentSecretKey: tencentSecretKey.isEmpty ? nil : tencentSecretKey.trimmingCharacters(in: .whitespaces),
             xfyunApiKey: xfyunApiKey.isEmpty ? nil : xfyunApiKey.trimmingCharacters(in: .whitespaces),
             xfyunApiSecret: xfyunApiSecret.isEmpty ? nil : xfyunApiSecret.trimmingCharacters(in: .whitespaces),
             presetOverrides: normalizedOverrides(),

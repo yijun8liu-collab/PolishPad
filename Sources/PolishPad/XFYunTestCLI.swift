@@ -5,11 +5,21 @@ import Foundation
 /// 打印流式部分结果与终稿。验证鉴权/协议/降级链，不启动 UI
 enum XFYunTestCLI {
     @MainActor
-    static func run(wavPath: String) {
-        guard let cfg = ConfigStore.loadRaw(),
-              let appId = cfg.xfyunAppId, let apiKey = cfg.xfyunApiKey,
-              let apiSecret = cfg.xfyunApiSecret else {
-            print("配置缺少讯飞凭证"); exit(1)
+    static func run(wavPath: String, engine engineName: String = "xfyun") {
+        let cfg = ConfigStore.loadRaw()
+        let engine: (any CloudTailEngine)
+        if engineName == "tencent" {
+            guard let appId = cfg?.tencentAppId, let sid = cfg?.tencentSecretId,
+                  let sk = cfg?.tencentSecretKey else {
+                print("配置缺少腾讯凭证"); exit(1)
+            }
+            engine = TencentTailEngine(appId: appId, secretId: sid, secretKey: sk)
+        } else {
+            guard let appId = cfg?.xfyunAppId, let apiKey = cfg?.xfyunApiKey,
+                  let apiSecret = cfg?.xfyunApiSecret else {
+                print("配置缺少讯飞凭证"); exit(1)
+            }
+            engine = XFYunTailEngine(appId: appId, apiKey: apiKey, apiSecret: apiSecret)
         }
         guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: wavPath)) else {
             print("无法读取 wav"); exit(1)
@@ -40,7 +50,6 @@ enum XFYunTestCLI {
 
         var finalText: String?
         var lastPartial = ""
-        let engine = XFYunTailEngine(appId: appId, apiKey: apiKey, apiSecret: apiSecret)
         engine.onPartial = { text in
             if text != lastPartial {
                 print("[实时] \(text.suffix(40))")
@@ -48,7 +57,7 @@ enum XFYunTestCLI {
             }
         }
         engine.onFinal = { text in finalText = text }
-        engine.onUnavailable = { print("讯飞不可用（已降级到底）"); finalText = "" }
+        engine.onUnavailable = { print("云端引擎不可用（已降级到底）"); finalText = "" }
 
         engine.startUtterance()
         let chunk = 640   // 40ms
@@ -58,12 +67,12 @@ enum XFYunTestCLI {
             i += chunk
             RunLoop.main.run(until: Date().addingTimeInterval(0.04))
         }
-        engine.endUtterance()
+        engine.endUtterance(nil)
         let deadline = Date().addingTimeInterval(8)
         while finalText == nil, Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         }
-        print("=== 终稿（\(engine.variantName)）===")
+        print("=== 终稿 ===")
         print(finalText ?? lastPartial)
         exit(finalText == nil && lastPartial.isEmpty ? 1 : 0)
     }

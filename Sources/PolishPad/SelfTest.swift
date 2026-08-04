@@ -193,6 +193,15 @@ enum SelfTest {
         asm.apply(sn: 3, text: "今天天气不错", pgs: "rpl", rg: [1, 2])
         check("xfyun.wpgs", asm.text == "今天天气不错")
 
+        // 7.7 腾讯签名 URL（固定时间戳/nonce 可复现）
+        let tURL = TencentSession.signedURL(
+            appId: "125", secretId: "sid", secretKey: "sk",
+            engine: "16k_zh_large", voiceId: "v1", now: 1_700_000_000, nonce: 42)
+        check("tencent.url", tURL?.host == "asr.cloud.tencent.com"
+              && tURL?.path == "/asr/v2/125"
+              && tURL?.query?.contains("signature=") == true
+              && tURL?.query?.contains("engine_model_type=16k_zh_large") == true)
+
         // 8. 版本比较
         check("semver.newer", SettingsView.isVersion("0.5.0", newerThan: "0.4.9"))
         check("semver.equal", !SettingsView.isVersion("0.5.0", newerThan: "0.5.0"))

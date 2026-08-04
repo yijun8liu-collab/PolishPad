@@ -119,6 +119,9 @@ struct AppConfig: Codable {
     /// 按住说话热键（nil=关闭）："right_cmd" / "right_shift" / "right_ctrl"
     var pttKey: String? = nil
     var xfyunAppId: String? = nil
+    var tencentAppId: String? = nil
+    var tencentSecretId: String? = nil
+    var tencentSecretKey: String? = nil
     var xfyunApiKey: String? = nil
     var xfyunApiSecret: String? = nil
     /// 内置场景提示词的用户覆写（键=场景 rawValue）：非空即替代内置版，

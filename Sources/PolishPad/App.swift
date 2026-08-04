@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
            idx + 1 < CommandLine.arguments.count {
             XFYunTestCLI.run(wavPath: CommandLine.arguments[idx + 1])
         }
+        if let idx = CommandLine.arguments.firstIndex(of: "--test-tencent"),
+           idx + 1 < CommandLine.arguments.count {
+            XFYunTestCLI.run(wavPath: CommandLine.arguments[idx + 1], engine: "tencent")
+        }
         if let idx = CommandLine.arguments.firstIndex(of: "--test-whisper"),
            idx + 1 < CommandLine.arguments.count {
             WhisperTestCLI.run(wavPath: CommandLine.arguments[idx + 1])

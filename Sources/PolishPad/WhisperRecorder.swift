@@ -313,8 +313,8 @@ final class WhisperRecorder {
     // 融合模式：系统识别负责当前未完句的逐字实时显示（丝滑），
     // Whisper 每句定稿后原地替换（准确）。系统侧文字同时是安全网——
     // Whisper 闸门误丢的段，尾巴文字仍会保留进最终结果
-    /// 云端实时层（讯飞）：配置开启且凭证齐全时优先，失败回退 SFSpeech
-    private var xfyunTail: XFYunTailEngine?
+    /// 云端实时层（讯飞/腾讯）：配置开启且凭证齐全时优先，失败回退 SFSpeech
+    private var cloudTail: (any CloudTailEngine)?
 
     private let tailBox = RequestBox()
     private var tailRecognizer: SFSpeechRecognizer?
@@ -384,7 +384,7 @@ final class WhisperRecorder {
         pipeline.onUtteranceEnd = { [weak self] uid, g in
             Task { @MainActor in
                 guard let self, g == self.generation,
-                      self.tailActive || self.xfyunTail != nil else { return }
+                      self.tailActive || self.cloudTail != nil else { return }
                 let xfText = self.joinTail(self.tailCommitted, self.tailPartial)
                 let snap = xfText.isEmpty ? self.bridgePartial : xfText
                 Self.flog("SNAP#\(uid) \(snap.prefix(24))\(xfText.isEmpty ? "(桥)" : "")")
@@ -392,8 +392,8 @@ final class WhisperRecorder {
                 self.tailCommitted = ""
                 self.tailPartial = ""
                 self.bridgePartial = ""
-                if self.xfyunTail != nil, self.tailActive { self.startTailSegment() }
-                if let tail = self.xfyunTail {
+                if self.cloudTail != nil, self.tailActive { self.startTailSegment() }
+                if let tail = self.cloudTail {
                     // 终稿到达：这句还没定稿 → 升级快照；已定稿 → 按规则追溯替换
                     self.pendingXfyunFinals += 1
                     tail.endUtterance { [weak self] final in
@@ -466,14 +466,24 @@ final class WhisperRecorder {
         tailActive = SFSpeechRecognizer.authorizationStatus() == .authorized
             && tailRecognizer?.isAvailable == true
 
-        // 云端实时层：讯飞（大模型 → 经典版），不可用自动回退 SFSpeech
-        xfyunTail = nil
+        // 云端实时层：讯飞（大模型 → 经典版）或腾讯（16k_zh_large），
+        // 不可用自动回退 SFSpeech
+        cloudTail = nil
         let cfg = ConfigStore.loadRaw()
+        var built: (any CloudTailEngine)?
         if cfg?.realtimeEngine == "xfyun",
            let appId = cfg?.xfyunAppId, !appId.isEmpty,
            let apiKey = cfg?.xfyunApiKey, !apiKey.isEmpty,
            let apiSecret = cfg?.xfyunApiSecret, !apiSecret.isEmpty {
-            let engine = XFYunTailEngine(appId: appId, apiKey: apiKey, apiSecret: apiSecret)
+            built = XFYunTailEngine(appId: appId, apiKey: apiKey, apiSecret: apiSecret)
+        } else if cfg?.realtimeEngine == "tencent",
+           let appId = cfg?.tencentAppId, !appId.isEmpty,
+           let secretId = cfg?.tencentSecretId, !secretId.isEmpty,
+           let secretKey = cfg?.tencentSecretKey, !secretKey.isEmpty {
+            built = TencentTailEngine(appId: appId, secretId: secretId,
+                                      secretKey: secretKey)
+        }
+        if let engine = built {
             engine.onPartial = { [weak self] text in
                 guard let self, self.isRecording else { return }
                 self.tailPartial = text
@@ -482,16 +492,16 @@ final class WhisperRecorder {
             engine.onUnavailable = { [weak self] in
                 guard let self else { return }
                 // 三级降级末端：回退系统 SFSpeech
-                self.xfyunTail = nil
+                self.cloudTail = nil
                 if self.tailActive { self.startTailSegment() }
                 self.emit()
             }
-            xfyunTail = engine
+            cloudTail = engine
             engine.preconnect()   // 握手藏进开口前
             pipe.onSpeechAudio = { [weak self] samples, isStart, g in
                 Task { @MainActor in
                     guard let self, g == self.generation,
-                          let tail = self.xfyunTail else { return }
+                          let tail = self.cloudTail else { return }
                     if isStart { tail.startUtterance() }
                     tail.feed(samples)
                 }
@@ -499,7 +509,7 @@ final class WhisperRecorder {
         } else {
             pipe.onSpeechAudio = nil
         }
-        pipe.interimEnabled = !tailActive && xfyunTail == nil
+        pipe.interimEnabled = !tailActive && cloudTail == nil
 
         input.removeTap(onBus: 0)
         let box = tailBox
@@ -568,7 +578,7 @@ final class WhisperRecorder {
 
     private func handleTail(result: SFSpeechRecognitionResult?, error: Error?, gen: Int) {
         guard isRecording, tailActive, gen == tailGen else { return }
-        if xfyunTail != nil {
+        if cloudTail != nil {
             // 桥模式：只维护当前段的临时文本，讯飞出字后 emit 自动让位
             if let result {
                 bridgePartial = result.bestTranscription.formattedString
@@ -645,9 +655,14 @@ final class WhisperRecorder {
         }
         let chosen: String
         let source: CommittedPart.Source
-        if !tailActive && xfyunTail == nil {
+        if !tailActive && cloudTail == nil {
             chosen = text
             source = .whisper(hadEnglish: hasEnglish)
+        } else if cloudTail?.prefersRealtimeText == true, snapUsable, let snapshot {
+            // 实时层实测强于定稿层（腾讯大模型 95%）：实时版为准，
+            // Whisper 仅在实时版缺失/过短时兜底
+            chosen = snapshot
+            source = .snapshot
         } else if hasEnglish, snapEnglish, snapUsable, let snapshot {
             chosen = snapshot
             source = .snapshot
@@ -697,9 +712,9 @@ final class WhisperRecorder {
 
     private func emit() {
         let separator = language == "zh" ? "" : " "
-        let hasTail = tailActive || xfyunTail != nil
+        let hasTail = tailActive || cloudTail != nil
         var live = hasTail ? joinTail(tailCommitted, tailPartial) : interim
-        if xfyunTail != nil, live.isEmpty { live = bridgePartial }
+        if cloudTail != nil, live.isEmpty { live = bridgePartial }
         var parts = [committed]
         parts.append(contentsOf: pendingSnaps.sorted { $0.id < $1.id }.map(\.text))
         if !live.isEmpty { parts.append(live) }
@@ -714,8 +729,8 @@ final class WhisperRecorder {
         }
         isRecording = false
         // 收尾期讯飞会话保留：终稿还要回来升级快照
-        let endingTail = xfyunTail
-        xfyunTail = nil
+        let endingTail = cloudTail
+        cloudTail = nil
         endingTail?.stop()
         tailBox.finish()
         tailTask?.cancel()
