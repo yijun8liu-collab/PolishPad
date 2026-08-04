@@ -756,6 +756,19 @@ struct SettingsView: View {
     }
 
     private func save() {
+        // 云端实时引擎凭证不全：保存时自动回退系统识别（选项框同步归位）
+        if realtimeEngine == "xfyun",
+           xfyunAppId.trimmingCharacters(in: .whitespaces).isEmpty
+               || xfyunApiKey.trimmingCharacters(in: .whitespaces).isEmpty
+               || xfyunApiSecret.trimmingCharacters(in: .whitespaces).isEmpty {
+            realtimeEngine = "system"
+        }
+        if realtimeEngine == "tencent",
+           tencentAppId.trimmingCharacters(in: .whitespaces).isEmpty
+               || tencentSecretId.trimmingCharacters(in: .whitespaces).isEmpty
+               || tencentSecretKey.trimmingCharacters(in: .whitespaces).isEmpty {
+            realtimeEngine = "system"
+        }
         // 快捷键格式先行校验，避免保存后静默失效
         for spec in [hotkeyPanel, hotkeySelection, hotkeyAll] {
             let trimmed = spec.trimmingCharacters(in: .whitespaces)
