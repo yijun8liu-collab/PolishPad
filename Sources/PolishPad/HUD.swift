@@ -169,6 +169,12 @@ final class HUD {
         model.style = style
         model.light = UserDefaults.standard.bool(forKey: "lightTheme")
         model.pastedOK = false
+        // 编舞状态强制归位：上一轮按住说话若停在"光点"阶段（无内容/取消），
+        // 残留的 seedVisible/缩放会污染划词等其他 HUD 场景
+        model.seedVisible = false
+        model.bubbleScale = 1
+        model.bubbleOpacity = 1
+        model.bubbleBlur = 0
         let hosting = NSHostingView(rootView: HUDView(model: model))
         panel.contentView = hosting
         let size = hosting.fittingSize
